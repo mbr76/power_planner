@@ -187,10 +187,24 @@ class AdvancedPacingOptimizer:
         print(f"Zwift-Workout exportiert: {output_filename}")
 
     def export_to_garmin_fit(self, df_intervals, output_filename="workout.fit"):
-        with open(output_filename, "w") as f:
+        """
+        Exportiert die Intervalle als distanzbasiertes Garmin-Workout.
+        Die Schritte werden in Metern (m) statt in Sekunden definiert.
+        """
+        with open(output_filename, "w", encoding="utf-8") as f:
+            f.write("TARGET_POWER_PLAN_STEPS (DISTANCE BASED):\n")
             for idx, row in df_intervals.iterrows():
-                f.write(f"Step {idx}: {row['duration_min']}m @ {row['target_watt']}W\\n")
-        print(f"Garmin-Workout exportiert: {output_filename}")
+                # Berechne die exakte Distanz des Intervalls in Metern
+                start_m = int(row['start_km'] * 1000)
+                end_m = int(row['end_km'] * 1000)
+                distance_m = end_m - start_m
+                
+                # Sicherheitscheck für das letzte Segment oder Rundungsfehler
+                if distance_m <= 0:
+                    continue
+                    
+                f.write(f"Step {idx}: Distance {distance_m}m, Target {row['target_watt']}W\n")
+        print(f"Distanzbasiertes Garmin-Workout exportiert: {output_filename}")
 
     def _generate_synthetic_oetztaler(self):
         segs = [{'l': 31.5, 's': -0.5}, {'l': 18.0, 's': 7.5}, {'l': 35.0, 's': -4.5}, {'l': 37.5, 's': 2.2},
