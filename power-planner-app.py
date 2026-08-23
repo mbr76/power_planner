@@ -201,20 +201,41 @@ try:
     c_list3.info(f"🥮 {hydro_bars}x Sportriegel / Hydro-Gels (à 40g KH)")
 
     # ==========================================
-    # 6. DOWNLOAD BUTTONS (MIT DYNAMISCHEM REINEM NAMEN)
+    # 6. DOWNLOAD BUTTONS (DYNAMISCHE DATEINAMEN)
     # ==========================================
     st.subheader("💾 Workout-Exporte")
+    
+    # 1. Zwift Export vorbereiten
     optimizer.export_to_zwift(df_intervals, "app_workout.zwo")
     with open("app_workout.zwo", "r", encoding="utf-8") as f:
         zwo_data = f.read()
         
-    # Dynamische Dateinamen aus dem Session-State zusammensetzen
     zwift_filename = f"{st.session_state.base_filename}_workout.zwo"
     
-    st.download_button(
-        label=f"📥 Zwift-Workout ({zwift_filename}) herunterladen", data=zwo_data,
-        file_name=zwift_filename, mime="application/xml"
-    )
+    # 2. Garmin Export vorbereiten
+    optimizer.export_to_garmin_fit(df_intervals, "app_workout.fit")
+    with open("app_workout.fit", "r", encoding="utf-8") as f:
+        fit_data = f.read()
+        
+    garmin_filename = f"{st.session_state.base_filename}_workout.fit"
+    
+    # Buttons nebeneinander platzieren
+    btn_col1, btn_col2 = st.columns(2)
+    
+    with btn_col1:
+        st.download_button(
+            label=f"📥 Zwift-Workout ({zwift_filename})", data=zwo_data,
+            file_name=zwift_filename, mime="application/xml",
+            use_container_width=True
+        )
+        
+    with btn_col2:
+        st.download_button(
+            label=f"📥 Garmin-Workout ({garmin_filename})", data=fit_data,
+            file_name=garmin_filename, mime="text/plain",
+            use_container_width=True
+        )
+
 
 except Exception as e:
     st.error(f"Fehler im Power-Planner Core-Modul. Details: {e}")
