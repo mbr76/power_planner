@@ -116,25 +116,36 @@ try:
     col4.metric("Gesamtbedarf KH", f"{total_hours * carbs_per_hour:.1f} g")
 
     # ==========================================
-    # FEATURE 3: GEOGRAFISCHE MAP VORSCHAU
+    # FEATURE 3: REALISTISCHE GPX-KARTEN VORSCHAU
     # ==========================================
-    st.subheader("🗺 shrink🗺️ Routen-Vorschau (Geografischer Verlauf)")
-    st.components.v1.html(
-        """
-        <div style="background-color: #f0f2f6; border-radius: 10px; padding: 15px; text-align: center; font-family: sans-serif; color: #31333F;">
-            📍 <b>Interaktive GPX-Kartennavigation aktiv</b><br>
-            <small>Strecke erfolgreich in das Power-Planner Backend geladen. GPS-Koordinaten synchronisiert.</small>
-        </div>
-        """, height=75
-    )
+    st.subheader("🗺️ Routen-Vorschau (Geografischer Verlauf)")
     
-    st.markdown(
-        """
-        <layout>
-        dynamicMapPlaceholder(naturalLanguagePrompt="Zeige eine topografische Übersichtskarte des Ötztaler Radmarathons von Sölden über das Kühtai, Innsbruck, den Brennerpass, Sterzing, Jaufenpass, St. Leonhard und das Timmelsjoch zurück nach Sölden. Hebe die Pässe farblich hervor.")
-        </layout>
-        """, unsafe_allow_html=True
-    )
+    # Prüfen, ob Koordinaten in der GPX-Datei vorhanden sind
+    if 'latitude' in df_route.columns and 'longitude' in df_route.columns:
+        fig_map = go.Figure(go.Scattermapbox(
+            lat=df_route['latitude'],
+            lon=df_route['longitude'],
+            mode='lines',
+            line=dict(width=4, color='#FF4B4B'),
+            name="Streckenverlauf"
+        ))
+        
+        # Karte zentrieren basierend auf den Streckendaten
+        center_lat = df_route['latitude'].mean()
+        center_lon = df_route['longitude'].mean()
+        
+        fig_map.update_layout(
+            mapbox_style="open-street-map", # Kostenlose, interaktive Karte
+            mapbox_zoom=8.5,
+            mapbox_center={"lat": center_lat, "lon": center_lon},
+            margin={"r":0,"t":0,"l":0,"b":0},
+            height=400
+        )
+        st.plotly_chart(fig_map, use_container_width=True)
+    else:
+        # Falls synthetische Testdaten geladen sind, zeigen wir einen schicken Hinweis
+        st.info("ℹ️ Für die künstliche Ötztaler-Testsimulation sind keine GPS-Koordinaten hinterlegt. Sobald du eine echte GPX-Datei hochlädst, erscheint hier die interaktive Landkarte.")
+
 
     # ==========================================
     # FEATURE 2: ELEVATION BARS VS POWER LINE
