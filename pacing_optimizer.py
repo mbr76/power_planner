@@ -84,7 +84,10 @@ class AdvancedPacingOptimizer:
                     points_data.append({
                         'distance_km': cumulative_dist,
                         'segment_len_m': dist_m,
-                        'slope': slope
+                        'slope': slope,
+                        'latitude': point.latitude,
+                        'longitude': point.longitude,
+                        'elevation': point.elevation
                     })
                     prev_point = point
                     
