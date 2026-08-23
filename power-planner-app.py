@@ -13,20 +13,51 @@ st.title("🚴‍♂️ Power-Planner — Pacing & Nutrition Strategy")
 st.markdown("Physikbasierte Routenplanung gekoppelt mit W'-Akku, Glykogentank und Fahrzeitprognose.")
 
 # ==========================================
-# 1. SEITENLEISTE (EINGABEPARAMETER)
+# 1. SEITENLEISTE (MIT TOOLTIPS & FARBSKALA)
 # ==========================================
 st.sidebar.header("🔧 Fahrereinstellungen")
 
-initial_ftp = st.sidebar.number_input("Start-FTP (Watt)", min_value=100, max_value=500, value=310, step=5)
-w_prime = st.sidebar.slider("W'-Kapazität (Joule)", 10000, 30000, 20000, step=1000)
-rider_w = st.sidebar.number_input("Fahrergewicht (kg)", min_value=40.0, max_value=130.0, value=72.0, step=0.5)
-bike_w = st.sidebar.number_input("Fahrrad- & Ausrüstungsgewicht (kg)", min_value=5.0, max_value=20.0, value=8.0, step=0.1)
+initial_ftp = st.sidebar.number_input(
+    "Start-FTP (Watt)", min_value=100, max_value=500, value=310, step=5,
+    help="Functional Threshold Power: Die maximale Leistung (in Watt), die du theoretisch über eine Stunde konstant halten kannst. Basis für alle aeroben Berechnungen."
+)
+
+w_prime = st.sidebar.slider(
+    "W'-Kapazität (Joule)", 10000, 30000, 20000, step=1000,
+    help="Dein anaerober 'Akku' in Joule. Jede Sekunde, die du über deiner FTP fährst, leert diesen Tank. Fährst du unter FTP, lädt er sich wieder auf. Typische Werte: 15.000 (Einstieg) bis 25.000+ (Sprinter/Pro)."
+)
+
+rider_w = st.sidebar.number_input(
+    "Fahrergewicht (kg)", min_value=40.0, max_value=130.0, value=72.0, step=0.5,
+    help="Dein nacktes Körpergewicht. Wichtig für die präzise Berechnung des Steigungswiderstands am Berg."
+)
+
+bike_w = st.sidebar.number_input(
+    "Fahrrad- & Ausrüstungsgewicht (kg)", min_value=5.0, max_value=20.0, value=8.0, step=0.1,
+    help="Das Gesamtgewicht deines Fahrrads inklusive gefüllter Trinkflaschen, Bekleidung, Helm, Schuhen und Werkzeug (ca. 8-10 kg)."
+)
 
 st.sidebar.header("🍏 Ernährungsstrategie")
-carbs_per_hour = st.sidebar.slider("Kohlenhydrate pro Stunde (g)", 20, 120, 90, step=5)
+carbs_per_hour = st.sidebar.slider(
+    "Kohlenhydrate pro Stunde (g)", 20, 120, 90, step=5,
+    help="Die Menge an Kohlenhydraten, die du pro Stunde zuführst. Mehr KH verzögern den Glykogen-Abfall und schützen dich vor dem Leistungseinbruch (Hungerast) am letzten Berg. Empfehlung für Marathons: 80-100g/h."
+)
 
 st.sidebar.header("🛣️ Routen-Konfiguration")
-target_f = st.sidebar.slider("Intensitätsfaktor (Target Factor)", 0.60, 1.00, 0.82, step=0.01)
+target_f = st.sidebar.slider(
+    "Intensitätsfaktor (Target Factor)", 0.60, 1.00, 0.82, step=0.01,
+    help="Der prozentuale Anteil deiner FTP, den du im flachen Gelände als Basis anstrebst. Höhere Werte verringern die Fahrzeit, leeren aber die Speicher schneller."
+)
+
+# Visuelle Orientierungsskala für den Target Factor in der Sidebar
+if target_f < 0.71:
+    st.sidebar.caption("🟢 **Aktuelle Einstufung: Sehr defensiv (Genussfahrt)**")
+elif target_f < 0.78:
+    st.sidebar.caption("🟢 **Aktuelle Einstufung: Solide Ausdauer Pace**")
+elif target_f < 0.84:
+    st.sidebar.caption("🟡 **Aktuelle Einstufung: Ambitioniert / Sportlich**")
+else:
+    st.sidebar.caption("🔴 **Aktuelle Einstufung: Renn-Pace / Elite (Sehr hart)**")
 
 uploaded_file = st.sidebar.file_uploader("GPX-Datei hochladen", type=["gpx"])
 gpx_path = "oetztaler_route.gpx"
@@ -37,22 +68,17 @@ if uploaded_file is not None:
     gpx_path = "temp_route.gpx"
 
 # ==========================================
-# 2. BERECHNUNG & INTELLIGENTE SCHLEIFE
+# 2. BERECHNUNG & SCOPE
 # ==========================================
 optimizer = AdvancedPacingOptimizer(
-    initial_ftp=initial_ftp,
-    w_prime_max=w_prime,
-    target_factor=target_f,
-    carb_intake_per_hour=carbs_per_hour,
-    rider_weight=rider_w,
-    bike_weight=bike_w
+    initial_ftp=initial_ftp, w_prime_max=w_prime, target_factor=target_f,
+    carb_intake_per_hour=carbs_per_hour, rider_weight=rider_w, bike_weight=bike_w
 )
 
 try:
-    # Route über den Parser der pacing_optimizer.py einlesen
     df_route = optimizer.parse_gpx(gpx_path)
     
-    # Sekunden- und Segmentdaten für die interaktiven Dashboard-Charts generieren
+    # Sekunden-Daten für die Charts generieren
     total_burned_kcal = 0.0
     w_prime_current = w_prime
     internal_glycogen_kcal = 2000.0
@@ -85,134 +111,98 @@ try:
             w_prime_current += (current_ftp - target_watt) * dt * (1.0 - w_prime_pct)
         w_prime_current = max(0.0, min(w_prime_current, w_prime))
         
-        # HIER WURDE NUN 'duration_sec' ERGÄNZT
         raw_points.append({
-            'distance_km': row['distance_km'],
-            'slope': slope,
-            'target_watt': target_watt,
-            'duration_sec': dt,
-            'w_prime_pct': w_prime_pct * 100,
-            'glycogen_pct': (internal_glycogen_kcal / 2000.0) * 100
+            'distance_km': row['distance_km'], 'slope': slope, 'target_watt': target_watt, 'duration_sec': dt,
+            'w_prime_pct': w_prime_pct * 100, 'glycogen_pct': (internal_glycogen_kcal / 2000.0) * 100
         })
         
     df_raw_pacing = pd.DataFrame(raw_points)
-    
-    # Saubere Intervalle über das Core-Skript aggregieren
     df_intervals = optimizer.optimize_pacing(df_route)
 
-    # Zeiten und Kennzahlen kalkulieren
     total_hours = df_intervals['duration_min'].sum() / 60.0
     h = math.floor(total_hours)
     m = round((total_hours % 1) * 60)
     sys_weight = rider_w + bike_w
 
-    # ==========================================
-    # 3. DASHBOARD METRIKEN
-    # ==========================================
+    # Metriken
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("Prognostizierte Fahrzeit", f"{h:02d}:{m:02d} Std")
     col2.metric("Systemgewicht Gesamt", f"{sys_weight:.1f} kg")
     col3.metric("Relative FTP", f"{initial_ftp / rider_w:.2f} W/kg")
     col4.metric("Gesamtbedarf KH", f"{total_hours * carbs_per_hour:.1f} g")
 
-    # ==========================================
-    # FEATURE 3: REALISTISCHE GPX-KARTEN VORSCHAU
-    # ==========================================
+    # FEATURE 3: GEOGRAFISCHE MAP VORSCHAU
     st.subheader("🗺️ Routen-Vorschau (Geografischer Verlauf)")
-    
-    # Prüfen, ob Koordinaten in der GPX-Datei vorhanden sind
     if 'latitude' in df_route.columns and 'longitude' in df_route.columns:
         fig_map = go.Figure(go.Scattermapbox(
-            lat=df_route['latitude'],
-            lon=df_route['longitude'],
-            mode='lines',
-            line=dict(width=4, color='#FF4B4B'),
-            name="Streckenverlauf"
+            lat=df_route['latitude'], lon=df_route['longitude'],
+            mode='lines', line=dict(width=4, color='#FF4B4B'), name="Streckenverlauf"
         ))
-        
-        # Karte zentrieren basierend auf den Streckendaten
-        center_lat = df_route['latitude'].mean()
-        center_lon = df_route['longitude'].mean()
-        
         fig_map.update_layout(
-            mapbox_style="open-street-map", # Kostenlose, interaktive Karte
-            mapbox_zoom=8.5,
-            mapbox_center={"lat": center_lat, "lon": center_lon},
-            margin={"r":0,"t":0,"l":0,"b":0},
-            height=400
+            mapbox_style="open-street-map", mapbox_zoom=8.5,
+            mapbox_center={"lat": df_route['latitude'].mean(), "lon": df_route['longitude'].mean()},
+            margin={"r":0,"t":0,"l":0,"b":0}, height=350
         )
         st.plotly_chart(fig_map, use_container_width=True)
     else:
-        # Falls synthetische Testdaten geladen sind, zeigen wir einen schicken Hinweis
-        st.info("ℹ️ Für die künstliche Ötztaler-Testsimulation sind keine GPS-Koordinaten hinterlegt. Sobald du eine echte GPX-Datei hochlädst, erscheint hier die interaktive Landkarte.")
+        st.info("ℹ️ Keine GPS-Koordinaten für die künstliche Simulation verfügbar. Lade eine echte GPX-Datei für die Live-Karte hoch.")
 
-
-    # ==========================================
     # FEATURE 2: ELEVATION BARS VS POWER LINE
-    # ==========================================
     st.subheader("📊 Höhenprofil & Segment-Leistung")
-    
     fig_elevation = make_subplots(specs=[[{"secondary_y": True}]])
-    
-    fig_elevation.add_trace(
-        go.Bar(
-            x=df_raw_pacing['distance_km'], 
-            y=df_raw_pacing['target_watt'],
-            name="Ziel-Leistung (Watt)",
-            marker=dict(color=df_raw_pacing['target_watt'], colorscale='Turbo'),
-            opacity=0.65
-        ),
-        secondary_y=False
-    )
+    fig_elevation.add_trace(go.Bar(
+        x=df_raw_pacing['distance_km'], y=df_raw_pacing['target_watt'], name="Ziel-Leistung (Watt)",
+        marker=dict(color=df_raw_pacing['target_watt'], colorscale='Turbo'), opacity=0.65
+    ), secondary_y=False)
     
     if 'elevation' in df_route.columns and not df_route['elevation'].isna().all():
         y_ele = df_route['elevation']
     else:
         y_ele = (df_route['slope'] * (df_route['segment_len_m'] / 100.0)).cumsum() + 1377
         
-    fig_elevation.add_trace(
-        go.Scatter(
-            x=df_route['distance_km'], 
-            y=y_ele,
-            name="Höhenprofil (m)",
-            line=dict(color="#4A4A4A", width=3)
-        ),
-        secondary_y=True
-    )
-    
+    fig_elevation.add_trace(go.Scatter(
+        x=df_route['distance_km'], y=y_ele, name="Höhenprofil (m)", line=dict(color="#4A4A4A", width=3)
+    ), secondary_y=True)
     fig_elevation.update_xaxes(title_text="Distanz (km)")
     fig_elevation.update_yaxes(title_text="Leistung (Watt)", secondary_y=False)
-    fig_elevation.update_yaxes(title_text="Höhe über NN (m)", secondary_y=True)
+    fig_elevation.update_yaxes(title_text="Höhe (m)", secondary_y=True)
     st.plotly_chart(fig_elevation, use_container_width=True)
 
-    # ==========================================
     # FEATURE 1: W' AND GLYCOGEN FATIGUE CHART
-    # ==========================================
     st.subheader("🔋 Energiespeicher & Ermüdungsverlauf")
-    
     fig_energy = go.Figure()
-    fig_energy.add_trace(go.Scatter(
-        x=df_raw_pacing['distance_km'], 
-        y=df_raw_pacing['w_prime_pct'],
-        name="W'-Akku (Anaerob) %",
-        line=dict(color="#FF4B4B", width=2)
-    ))
-    fig_energy.add_trace(go.Scatter(
-        x=df_raw_pacing['distance_km'], 
-        y=df_raw_pacing['glycogen_pct'],
-        name="Glykogentank (Metabolisch) %",
-        line=dict(color="#00CC96", width=2.5, dash='dash')
-    ))
-    # FEHLER BEHOBEN: range=[0, 100] komplettiert
+    fig_energy.add_trace(go.Scatter(x=df_raw_pacing['distance_km'], y=df_raw_pacing['w_prime_pct'], name="W'-Akku (Anaerob) %", line=dict(color="#FF4B4B", width=2)))
+    fig_energy.add_trace(go.Scatter(x=df_raw_pacing['distance_km'], y=df_raw_pacing['glycogen_pct'], name="Glykogentank (Metabolisch) %", line=dict(color="#00CC96", width=2.5, dash='dash')))
     fig_energy.update_layout(xaxis_title="Distanz (km)", yaxis_title="Speicher-Füllstand (%)", yaxis=dict(range=[0, 105]))
     st.plotly_chart(fig_energy, use_container_width=True)
 
     # ==========================================
-    # 5. TABELLE & LOGISTIK (EINKAUFSLISTE)
+    # 3. INTERVALL-TABELLE MIT FARBCODIERUNG
     # ==========================================
-    st.subheader("📋 Berechnete Intervall-Blöcke")
-    st.dataframe(df_intervals, use_container_width=True)
+    st.subheader("📋 Berechnete Intervall-Blöcke (Farbcodiert nach Intensitätszonen)")
 
+    # Funktion zur Definition der Hintergrundfarben basierend auf % FTP (Coggan-Zonen)
+    def style_zones(row):
+        pct = row['pct_ftp']
+        if pct < 55:    # Z1: Active Recovery
+            color = '#E5E7EB; color: #374151'
+        elif pct < 75:  # Z2: Endurance
+            color = '#D1FAE5; color: #065F46'
+        elif pct < 90:  # Z3: Tempo
+            color = '#FEF3C7; color: #92400E'
+        elif pct < 105: # Z4: Threshold
+            color = '#FFEDD5; color: #9A3412'
+        elif pct < 120: # Z5: VO2max
+            color = '#FEE2E2; color: #991B1B'
+        else:           # Z6/Z7: Anaerobic / Sprint
+            color = '#F3E8FF; color: #6B21A8'
+        return [f'background-color: {color}' for _ in row]
+
+    # Style auf das Dataframe anwenden
+    styled_df = df_intervals.style.apply(style_zones, axis=1)
+    st.dataframe(styled_df, use_container_width=True)
+
+    # Logistik (Einkaufsliste)
     st.subheader("🛒 Deine Sportnahrungs-Einkaufsliste")
     iso_bottles = math.ceil(total_hours)
     remaining_carbs = max(0, (total_hours * carbs_per_hour) - (iso_bottles * 35))
@@ -223,21 +213,11 @@ try:
     c_list1.info(f"🥤 {iso_bottles}x Iso-Portionsbeutel (à 35g KH)")
     c_list2.info(f"🧪 {standard_gels}x Standard-Gels (à 30g KH)")
     c_list3.info(f"🥮 {hydro_bars}x Sportriegel / Hydro-Gels (à 40g KH)")
-
-    # ==========================================
-    # 6. DOWNLOAD BUTTONS
-    # ==========================================
+    # Export
     st.subheader("💾 Workout-Exporte")
     optimizer.export_to_zwift(df_intervals, "app_workout.zwo")
     with open("app_workout.zwo", "r", encoding="utf-8") as f:
         zwo_data = f.read()
-        
-    st.download_button(
-        label="📥 Zwift-Workout (.zwo) herunterladen",
-        data=zwo_data,
-        file_name="power_planner_workout.zwo",
-        mime="application/xml"
-    )
-
+    st.download_button(label="📥 Zwift-Workout (.zwo) herunterladen", data=zwo_data, file_name="power_planner_workout.zwo", mime="application/xml")
 except Exception as e:
     st.error(f"Fehler im Power-Planner Core-Modul. Details: {e}")
