@@ -12,60 +12,46 @@ st.set_page_config(page_title="Power-Planner", layout="wide", page_icon="🚴‍
 st.title("🚴‍♂️ Power-Planner — Pacing & Nutrition Strategy")
 st.markdown("Physikbasierte Routenplanung gekoppelt mit W'-Akku, Glykogentank und Fahrzeitprognose.")
 
+# Hilfsfunktion für die ISO-Zeitformatierung (hh:mm:ss)
+def format_to_iso_duration(minutes):
+    total_seconds = int(float(minutes) * 60)
+    hours = total_seconds // 3600
+    minutes_rem = (total_seconds % 3600) // 60
+    seconds = total_seconds % 60
+    if hours > 0:
+        return f"{hours:02d}:{minutes_rem:02d}:{seconds:02d}"
+    return f"{minutes_rem:02d}:{seconds:02d}"
+
 # ==========================================
-# 1. SEITENLEISTE (MIT TOOLTIPS & FARBSKALA)
+# 1. SEITENLEISTE (EINGABEPARAMETER)
 # ==========================================
 st.sidebar.header("🔧 Fahrereinstellungen")
 
-initial_ftp = st.sidebar.number_input(
-    "Start-FTP (Watt)", min_value=100, max_value=500, value=310, step=5,
-    help="Functional Threshold Power: Die maximale Leistung (in Watt), die du theoretisch über eine Stunde konstant halten kannst. Basis für alle aeroben Berechnungen."
-)
-
-w_prime = st.sidebar.slider(
-    "W'-Kapazität (Joule)", 10000, 30000, 20000, step=1000,
-    help="Dein anaerober 'Akku' in Joule. Jede Sekunde, die du über deiner FTP fährst, leert diesen Tank. Fährst du unter FTP, lädt er sich wieder auf. Typische Werte: 15.000 (Einstieg) bis 25.000+ (Sprinter/Pro)."
-)
-
-rider_w = st.sidebar.number_input(
-    "Fahrergewicht (kg)", min_value=40.0, max_value=130.0, value=72.0, step=0.5,
-    help="Dein nacktes Körpergewicht. Wichtig für die präzise Berechnung des Steigungswiderstands am Berg."
-)
-
-bike_w = st.sidebar.number_input(
-    "Fahrrad- & Ausrüstungsgewicht (kg)", min_value=5.0, max_value=20.0, value=8.0, step=0.1,
-    help="Das Gesamtgewicht deines Fahrrads inklusive gefüllter Trinkflaschen, Bekleidung, Helm, Schuhen und Werkzeug (ca. 8-10 kg)."
-)
+initial_ftp = st.sidebar.number_input("Start-FTP (Watt)", min_value=100, max_value=500, value=310, step=5)
+w_prime = st.sidebar.slider("W'-Kapazität (Joule)", 10000, 30000, 20000, step=1000)
+rider_w = st.sidebar.number_input("Fahrergewicht (kg)", min_value=40.0, max_value=130.0, value=72.0, step=0.5)
+bike_w = st.sidebar.number_input("Fahrrad- & Ausrüstungsgewicht (kg)", min_value=5.0, max_value=20.0, value=8.0, step=0.1)
 
 st.sidebar.header("🍏 Ernährungsstrategie")
-carbs_per_hour = st.sidebar.slider(
-    "Kohlenhydrate pro Stunde (g)", 20, 120, 90, step=5,
-    help="Die Menge an Kohlenhydraten, die du pro Stunde zuführst. Mehr KH verzögern den Glykogen-Abfall und schützen dich vor dem Leistungseinbruch (Hungerast) am letzten Berg. Empfehlung für Marathons: 80-100g/h."
-)
+carbs_per_hour = st.sidebar.slider("Kohlenhydrate pro Stunde (g)", 20, 120, 90, step=5)
 
 st.sidebar.header("🛣️ Routen-Konfiguration")
-target_f = st.sidebar.slider(
-    "Intensitätsfaktor (Target Factor)", 0.60, 1.00, 0.82, step=0.01,
-    help="Der prozentuale Anteil deiner FTP, den du im flachen Gelände als Basis anstrebst. Höhere Werte verringern die Fahrzeit, leeren aber die Speicher schneller."
-)
-
-# Visuelle Orientierungsskala für den Target Factor in der Sidebar
-if target_f < 0.71:
-    st.sidebar.caption("🟢 **Aktuelle Einstufung: Sehr defensiv (Genussfahrt)**")
-elif target_f < 0.78:
-    st.sidebar.caption("🟢 **Aktuelle Einstufung: Solide Ausdauer Pace**")
-elif target_f < 0.84:
-    st.sidebar.caption("🟡 **Aktuelle Einstufung: Ambitioniert / Sportlich**")
-else:
-    st.sidebar.caption("🔴 **Aktuelle Einstufung: Renn-Pace / Elite (Sehr hart)**")
+target_f = st.sidebar.slider("Intensitätsfaktor (Target Factor)", 0.60, 1.00, 0.82, step=0.01)
 
 uploaded_file = st.sidebar.file_uploader("GPX-Datei hochladen", type=["gpx"])
+
+# Session State für den Basis-Dateinamen initialisieren
+if "base_filename" not in st.session_state:
+    st.session_state.base_filename = "oetztaler_route"
+
 gpx_path = "oetztaler_route.gpx"
 
 if uploaded_file is not None:
     with open("temp_route.gpx", "wb") as f:
         f.write(uploaded_file.getbuffer())
     gpx_path = "temp_route.gpx"
+    # Basisnamen ohne die .gpx Endung extrahieren und im Session State sichern
+    st.session_state.base_filename = os.path.splitext(uploaded_file.name)[0]
 
 # ==========================================
 # 2. BERECHNUNG & SCOPE
@@ -78,7 +64,6 @@ optimizer = AdvancedPacingOptimizer(
 try:
     df_route = optimizer.parse_gpx(gpx_path)
     
-    # Sekunden-Daten für die Charts generieren
     total_burned_kcal = 0.0
     w_prime_current = w_prime
     internal_glycogen_kcal = 2000.0
@@ -144,8 +129,6 @@ try:
             margin={"r":0,"t":0,"l":0,"b":0}, height=350
         )
         st.plotly_chart(fig_map, use_container_width=True)
-    else:
-        st.info("ℹ️ Keine GPS-Koordinaten für die künstliche Simulation verfügbar. Lade eine echte GPX-Datei für die Live-Karte hoch.")
 
     # FEATURE 2: ELEVATION BARS VS POWER LINE
     st.subheader("📊 Höhenprofil & Segment-Leistung")
@@ -163,9 +146,6 @@ try:
     fig_elevation.add_trace(go.Scatter(
         x=df_route['distance_km'], y=y_ele, name="Höhenprofil (m)", line=dict(color="#4A4A4A", width=3)
     ), secondary_y=True)
-    fig_elevation.update_xaxes(title_text="Distanz (km)")
-    fig_elevation.update_yaxes(title_text="Leistung (Watt)", secondary_y=False)
-    fig_elevation.update_yaxes(title_text="Höhe (m)", secondary_y=True)
     st.plotly_chart(fig_elevation, use_container_width=True)
 
     # FEATURE 1: W' AND GLYCOGEN FATIGUE CHART
@@ -177,29 +157,35 @@ try:
     st.plotly_chart(fig_energy, use_container_width=True)
 
     # ==========================================
-    # 3. INTERVALL-TABELLE MIT FARBCODIERUNG
+    # 3. INTERVALL-TABELLE MIT FORMATIERUNG (KILOMETER, PROZENT, ISO-ZEIT)
     # ==========================================
     st.subheader("📋 Berechnete Intervall-Blöcke (Farbcodiert nach Intensitätszonen)")
 
-    # Funktion zur Definition der Hintergrundfarben basierend auf % FTP (Coggan-Zonen)
+    # Vorbereitung der Formatierung: Zeit-Minuten in ISO-Strings umwandeln
+    df_display = df_intervals.copy()
+    df_display['duration_min'] = df_display['duration_min'].apply(format_to_iso_duration)
+
+    # Spalten umbenennen, damit es in der Tabelle gut aussieht
+    df_display.columns = ['Start (km)', 'Ende (km)', 'Dauer (hh:mm:ss)', 'Ziel-Leistung (W)', 'Intensität (% FTP)']
+
     def style_zones(row):
-        pct = row['pct_ftp']
-        if pct < 55:    # Z1: Active Recovery
-            color = '#E5E7EB; color: #374151'
-        elif pct < 75:  # Z2: Endurance
-            color = '#D1FAE5; color: #065F46'
-        elif pct < 90:  # Z3: Tempo
-            color = '#FEF3C7; color: #92400E'
-        elif pct < 105: # Z4: Threshold
-            color = '#FFEDD5; color: #9A3412'
-        elif pct < 120: # Z5: VO2max
-            color = '#FEE2E2; color: #991B1B'
-        else:           # Z6/Z7: Anaerobic / Sprint
-            color = '#F3E8FF; color: #6B21A8'
+        # Wir greifen auf den numerischen Wert der Intensität zu
+        pct = row['Intensität (% FTP)']
+        if pct < 55: color = '#E5E7EB; color: #374151'
+        elif pct < 75: color = '#D1FAE5; color: #065F46'
+        elif pct < 90: color = '#FEF3C7; color: #92400E'
+        elif pct < 105: color = '#FFEDD5; color: #9A3412'
+        elif pct < 120: color = '#FEE2E2; color: #991B1B'
+        else: color = '#F3E8FF; color: #6B21A8'
         return [f'background-color: {color}' for _ in row]
 
-    # Style auf das Dataframe anwenden
-    styled_df = df_intervals.style.apply(style_zones, axis=1)
+    # Formatierungs-Dictionary für Kilometer (2 Dezimalstellen) und Intensität (Ganzzahl + %)
+    styled_df = df_display.style.format({
+        'Start (km)': '{:.2f}',
+        'Ende (km)': '{:.2f}',
+        'Intensität (% FTP)': '{:.0f}%'
+    }).apply(style_zones, axis=1)
+    
     st.dataframe(styled_df, use_container_width=True)
 
     # Logistik (Einkaufsliste)
@@ -213,11 +199,22 @@ try:
     c_list1.info(f"🥤 {iso_bottles}x Iso-Portionsbeutel (à 35g KH)")
     c_list2.info(f"🧪 {standard_gels}x Standard-Gels (à 30g KH)")
     c_list3.info(f"🥮 {hydro_bars}x Sportriegel / Hydro-Gels (à 40g KH)")
-    # Export
+
+    # ==========================================
+    # 6. DOWNLOAD BUTTONS (MIT DYNAMISCHEM REINEM NAMEN)
+    # ==========================================
     st.subheader("💾 Workout-Exporte")
     optimizer.export_to_zwift(df_intervals, "app_workout.zwo")
     with open("app_workout.zwo", "r", encoding="utf-8") as f:
         zwo_data = f.read()
-    st.download_button(label="📥 Zwift-Workout (.zwo) herunterladen", data=zwo_data, file_name="power_planner_workout.zwo", mime="application/xml")
+        
+    # Dynamische Dateinamen aus dem Session-State zusammensetzen
+    zwift_filename = f"{st.session_state.base_filename}_workout.zwo"
+    
+    st.download_button(
+        label=f"📥 Zwift-Workout ({zwift_filename}) herunterladen", data=zwo_data,
+        file_name=zwift_filename, mime="application/xml"
+    )
+
 except Exception as e:
     st.error(f"Fehler im Power-Planner Core-Modul. Details: {e}")
