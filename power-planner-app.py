@@ -27,16 +27,37 @@ def format_to_iso_duration(minutes):
 # ==========================================
 st.sidebar.header("🔧 Fahrereinstellungen")
 
-initial_ftp = st.sidebar.number_input("Start-FTP (Watt)", min_value=100, max_value=500, value=310, step=5)
-w_prime = st.sidebar.slider("W'-Kapazität (Joule)", 10000, 30000, 20000, step=1000)
-rider_w = st.sidebar.number_input("Fahrergewicht (kg)", min_value=40.0, max_value=130.0, value=72.0, step=0.5)
-bike_w = st.sidebar.number_input("Fahrrad- & Ausrüstungsgewicht (kg)", min_value=5.0, max_value=20.0, value=8.0, step=0.1)
+initial_ftp = st.sidebar.number_input(
+    "Start-FTP (Watt)", min_value=100, max_value=500, value=310, step=5,
+    help="Functional Threshold Power: Die maximale Leistung (in Watt), die du theoretisch über eine Stunde konstant halten kannst. Basis für alle aeroben Berechnungen."
+)
+
+w_prime = st.sidebar.slider(
+    "W'-Kapazität (Joule)", 10000, 30000, 20000, step=1000,
+    help="Dein anaerober 'Akku' in Joule. Jede Sekunde, die du über deiner FTP fährst, leert diesen Tank. Fährst du unter FTP, lädt er sich wieder auf. Typische Werte: 15.000 (Einstieg) bis 25.000+ (Sprinter/Pro)."
+)
+
+rider_w = st.sidebar.number_input(
+    "Fahrergewicht (kg)", min_value=40.0, max_value=130.0, value=76.0, step=0.5,
+    help="Dein nacktes Körpergewicht. Wichtig für die präzise Berechnung des Steigungswiderstands am Berg."
+)
+
+bike_w = st.sidebar.number_input(
+    "Fahrrad- & Ausrüstungsgewicht (kg)", min_value=5.0, max_value=20.0, value=8.0, step=0.1,
+    help="Das Gesamtgewicht deines Fahrrads inklusive gefüllter Trinkflaschen, Bekleidung, Helm, Schuhen und Werkzeug (ca. 8-10 kg)."
+)
 
 st.sidebar.header("🍏 Ernährungsstrategie")
-carbs_per_hour = st.sidebar.slider("Kohlenhydrate pro Stunde (g)", 20, 120, 90, step=5)
+carbs_per_hour = st.sidebar.slider(
+    "Kohlenhydrate pro Stunde (g)", 20, 120, 90, step=5,
+    help="Die Menge an Kohlenhydraten, die du pro Stunde zuführst. Mehr KH verzögern den Glykogen-Abfall und schützen dich vor dem Leistungseinbruch (Hungerast) am letzten Berg. Empfehlung für Marathons: 80-100g/h."
+)
 
 st.sidebar.header("🛣️ Routen-Konfiguration")
-target_f = st.sidebar.slider("Intensitätsfaktor (Target Factor)", 0.60, 1.00, 0.82, step=0.01)
+target_f = st.sidebar.slider(
+    "Intensitätsfaktor (Target Factor)", 0.60, 1.00, 0.82, step=0.01,
+    help="Der prozentuale Anteil deiner FTP, den du im flachen Gelände als Basis anstrebst. Höhere Werte verringern die Fahrzeit, leeren aber die Speicher schneller."
+)
 
 uploaded_file = st.sidebar.file_uploader("GPX-Datei hochladen", type=["gpx"])
 
