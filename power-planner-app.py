@@ -59,6 +59,16 @@ target_f = st.sidebar.slider(
     help="Der prozentuale Anteil deiner FTP, den du im flachen Gelände als Basis anstrebst. Höhere Werte verringern die Fahrzeit, leeren aber die Speicher schneller."
 )
 
+# Visuelle Orientierungsskala für den Target Factor in der Sidebar
+if target_f < 0.71:
+    st.sidebar.caption("🟢 **Aktuelle Einstufung: Sehr defensiv (Genussfahrt)**")
+elif target_f < 0.78:
+    st.sidebar.caption("🟢 **Aktuelle Einstufung: Solide Ausdauer Pace**")
+elif target_f < 0.84:
+    st.sidebar.caption("🟡 **Aktuelle Einstufung: Ambitioniert / Sportlich**")
+else:
+    st.sidebar.caption("🔴 **Aktuelle Einstufung: Renn-Pace / Elite (Sehr hart)**")
+
 uploaded_file = st.sidebar.file_uploader("GPX-Datei hochladen", type=["gpx"])
 
 # Session State für den Basis-Dateinamen initialisieren
