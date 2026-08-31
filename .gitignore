@@ -4,6 +4,15 @@
 #local env
 pacing-env/
 
+# App generated exports & temporary test files
+temp_route.gpx
+app_workout.*
+*.fit
+*.zwo
+*.png
+oetztaler_final.*
+oetztaler_pacing_strategy.*
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
