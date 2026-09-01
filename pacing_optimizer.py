@@ -1,4 +1,5 @@
 import os
+import io
 import math
 import json
 from datetime import datetime, timezone
@@ -38,7 +39,7 @@ class AdvancedPacingOptimizer:
         f_constant = (self.total_mass * g * s) + (self.total_mass * g * self.crr)
         # Bisektion-Suchbereich: Zwischen 1.53 m/s (5.5 km/h) und 22.2 m/s (80 km/h)
         low, high = 1.53, 22.2
-        for _ in range(25):
+        for _ in range(14):
             mid = (low + high) / 2.0
             # Physikalische Leistungsgleichung: P = F_luft * v + F_konstant * v
             p_calc = (0.5 * self.cda * self.rho * (mid**3)) + (f_constant * mid)
@@ -49,12 +50,22 @@ class AdvancedPacingOptimizer:
                 
         return (low + high) / 2.0
 
-    def parse_gpx(self, gpx_file_path):
-        if not os.path.exists(gpx_file_path) or gpxpy is None:
+    def parse_gpx(self, gpx_source):
+        if gpxpy is None:
             return self._generate_synthetic_oetztaler()
-            
-        with open(gpx_file_path, 'r', encoding='utf-8') as f:
-            gpx = gpxpy.parse(f)
+
+        try:
+            if isinstance(gpx_source, (bytes, bytearray)):
+                gpx = gpxpy.parse(io.BytesIO(gpx_source))
+            elif isinstance(gpx_source, str) and ("<gpx" in gpx_source or "<?xml" in gpx_source):
+                gpx = gpxpy.parse(io.StringIO(gpx_source))
+            elif isinstance(gpx_source, str) and os.path.exists(gpx_source):
+                with open(gpx_source, 'r', encoding='utf-8') as f:
+                    gpx = gpxpy.parse(f)
+            else:
+                return self._generate_synthetic_oetztaler()
+        except Exception:
+            return self._generate_synthetic_oetztaler()
             
         points_data = []
         cumulative_dist = 0.0
