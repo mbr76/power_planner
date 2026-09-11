@@ -1,0 +1,42 @@
+[project]
+name = "power-planner"
+version = "1.0.0"
+description = "Power Planner - Pacing & Nutrition Strategy"
+dependencies = [
+    "flet==0.86.0",
+    "pandas>=2.0.0",
+    "numpy>=1.24.0",
+    "matplotlib>=3.8.0",
+    "gpxpy>=1.6.0",
+    "requests>=2.31.0",
+    "pillow>=10.0.0",
+    "opencv-python>=4.10.0",
+]
+
+[tool.flet.app]
+path = "."
+module = "main"
+
+[tool.flet]
+org = "com.pacing"
+product = "PowerPlanner"
+bundle_id = "com.pacing.powerplanner"
+company = "PowerPlanner"
+copyright = "Copyright (c) 2026"
+permissions = ["camera"]
+
+[tool.flet.ios]
+bundle_id = "com.pacing.powerplanner"
+dependencies = [
+    "flet==0.86.0",
+    "pandas>=2.0.0",
+    "numpy>=1.24.0",
+    "matplotlib>=3.8.0",
+    "gpxpy>=1.6.0",
+    "requests>=2.31.0",
+    "pillow>=10.0.0",
+    "opencv-python>=4.10.0",
+]
+
+[tool.flet.ios.info]
+NSCameraUsageDescription = "Kamerazugriff wird benötigt, um den QR-Code vom Karoo Fahrradcomputer zu scannen."
