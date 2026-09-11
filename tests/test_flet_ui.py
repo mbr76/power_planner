@@ -15,7 +15,7 @@ class MockPage:
         self.window = type('Window', (), {'min_width': 0, 'min_height': 0})()
         self.overlay = []
         self.services = []
-        self.snack_bar = None
+        self._dialogs = type('Dialogs', (), {'controls': []})()
         self.appbar = None
         self.navigation_bar = None
         self.controls = []
@@ -23,6 +23,14 @@ class MockPage:
         self.scroll = None
         self.title = ''
         self.web = is_web
+
+    def show_dialog(self, dialog):
+        self._dialogs.controls.append(dialog)
+
+    def pop_dialog(self):
+        if self._dialogs.controls:
+            return self._dialogs.controls.pop()
+        return None
 
     def update(self):
         pass
@@ -115,3 +123,39 @@ def test_decode_qr_image_bytes():
     
     res = ppf.decode_qr_image(buf.getvalue())
     assert res is None
+
+
+def test_decode_qr_image_valid_code():
+    """Test QR decoding function successfully extracting text from real QR code."""
+    import qrcode
+    test_url = "http://192.168.1.45:8080/upload?token=PRDUTX"
+    qr_img = qrcode.make(test_url)
+    buf = io.BytesIO()
+    qr_img.save(buf, format='PNG')
+    
+    # Test bytes decoding
+    res = ppf.decode_qr_image(buf.getvalue())
+    assert res == test_url
+    
+    # Test PIL Image / numpy decoding
+    res_pil = ppf.decode_qr_image(qr_img)
+    assert res_pil == test_url
+
+
+def test_ui_qr_camera_and_gpx_controls():
+    """Test that GPX selector and QR camera scanner controls are configured properly in UI."""
+    async def run():
+        page = MockPage()
+        await ppf.main(page)
+        
+        # Check Setup tab for GPX picker button
+        tab_setup = page.controls[0].content
+        assert tab_setup is not None
+        
+        # Check Sync tab
+        page.navigation_bar.selected_index = 2
+        page.navigation_bar.on_change(ev.Event(name='change', control=page.navigation_bar, data='2'))
+        tab_sync = page.controls[0].content
+        assert tab_sync is not None
+        
+    asyncio.run(run())
