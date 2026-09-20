@@ -16,6 +16,18 @@ dependencies = [
 [tool.flet.app]
 path = "."
 module = "main"
+exclude = [
+    ".git",
+    "pacing-env",
+    "build",
+    "dist",
+    "tests",
+    "__pycache__",
+    "*.png",
+    "*.fit",
+    "*.zwo",
+    "*.json",
+]
 
 [tool.flet]
 org = "com.pacing"

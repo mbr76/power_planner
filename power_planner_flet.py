@@ -277,8 +277,8 @@ def get_available_gpx_files():
 async def main(page: ft.Page):
     page.title = "🚴‍♂️ Power-Planner — Pacing & Nutrition Strategy"
     page.theme_mode = ft.ThemeMode.DARK
-    page.padding = 16
-    page.scroll = ft.ScrollMode.ADAPTIVE
+    page.padding = 0
+    page.scroll = None
     page.window.min_width = 380
     page.window.min_height = 650
 
@@ -312,6 +312,10 @@ async def main(page: ft.Page):
         "karoo_token": "",
         "logs": []
     }
+
+    def format_chip_route(path):
+        base = os.path.basename(path)
+        return f"📍 {base[:11]}..." if len(base) > 14 else f"📍 {base}"
 
     # ----------------------------------------------------
     # Calculation & Chart Rendering Engine (Ultra-Fast)
@@ -532,7 +536,7 @@ async def main(page: ft.Page):
     def make_kpi_card(icon, label, value_control, col_span=6):
         return ft.Container(
             content=ft.Column([
-                ft.Row([ft.Icon(icon, size=18, color=ft.Colors.GREY_400), ft.Text(label, size=12, color=ft.Colors.GREY_400)]),
+                ft.Row([ft.Icon(icon, size=18, color=ft.Colors.GREY_400), ft.Text(label, size=12, color=ft.Colors.GREY_400, expand=True)]),
                 value_control
             ], spacing=4),
             padding=14,
@@ -618,7 +622,8 @@ async def main(page: ft.Page):
                 state["charts_dirty"] = True
 
             update_pace_badge()
-            route_status_chip.label = ft.Text(f"📍 {os.path.basename(state['gpx_path'])}")
+            route_status_chip.label = ft.Text(format_chip_route(state['gpx_path']), size=11)
+            route_status_chip.tooltip = os.path.basename(state['gpx_path'])
             page.update()
         else:
             show_snack(f"Fehler bei der Berechnung: {err}", bgcolor=ft.Colors.RED_700, icon=ft.Icons.ERROR_OUTLINE)
@@ -822,21 +827,21 @@ async def main(page: ft.Page):
             ft.Card(
                 content=ft.Container(
                     content=ft.Column([
-                        ft.Row([ft.Text("Start-FTP (Functional Threshold Power)", size=13, weight=ft.FontWeight.W_500), ftp_val_text], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                        ft.Row([ft.Text("Start-FTP (FTP)", size=13, weight=ft.FontWeight.W_500, expand=True), ftp_val_text], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
                         ft.Slider(min=100, max=500, divisions=80, value=state["initial_ftp"], on_change=on_ftp_change, on_change_end=on_ftp_change_end),
 
                         ft.Divider(height=10, color=ft.Colors.TRANSPARENT),
-                        ft.Row([ft.Text("W'-Kapazität (Anaerober Akku)", size=13, weight=ft.FontWeight.W_500), wprime_val_text], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                        ft.Row([ft.Text("W'-Kapazität (Anaerober Akku)", size=13, weight=ft.FontWeight.W_500, expand=True), wprime_val_text], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
                         ft.Slider(min=10000, max=30000, divisions=20, value=state["w_prime"], on_change=on_wprime_change, on_change_end=on_wprime_change_end),
 
                         ft.Divider(height=10, color=ft.Colors.TRANSPARENT),
                         ft.ResponsiveRow([
                             ft.Column([
-                                ft.Row([ft.Text("Fahrergewicht", size=13), rider_w_val_text], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                                ft.Row([ft.Text("Fahrergewicht", size=13, expand=True), rider_w_val_text], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
                                 ft.Slider(min=40, max=130, divisions=90, value=state["rider_w"], on_change=on_rider_w_change, on_change_end=on_rider_w_change_end),
                             ], col={"xs": 12, "md": 6}),
                             ft.Column([
-                                ft.Row([ft.Text("Fahrrad- & Ausrüstungsgewicht", size=13), bike_w_val_text], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                                ft.Row([ft.Text("Fahrrad & Ausrüstung", size=13, expand=True), bike_w_val_text], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
                                 ft.Slider(min=5, max=20, divisions=30, value=state["bike_w"], on_change=on_bike_w_change, on_change_end=on_bike_w_change_end),
                             ], col={"xs": 12, "md": 6}),
                         ]),
@@ -849,11 +854,11 @@ async def main(page: ft.Page):
             ft.Card(
                 content=ft.Container(
                     content=ft.Column([
-                        ft.Row([ft.Text("Kohlenhydrate pro Stunde (g/h)", size=13, weight=ft.FontWeight.W_500), carbs_val_text], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                        ft.Row([ft.Text("Kohlenhydrate (g/h)", size=13, weight=ft.FontWeight.W_500, expand=True), carbs_val_text], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
                         ft.Slider(min=20, max=120, divisions=20, value=state["carbs_per_hour"], on_change=on_carbs_change, on_change_end=on_carbs_change_end),
 
                         ft.Divider(height=10, color=ft.Colors.TRANSPARENT),
-                        ft.Row([ft.Text("Intensitätsfaktor (Target Factor)", size=13, weight=ft.FontWeight.W_500), target_f_val_text], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                        ft.Row([ft.Text("Intensitätsfaktor (Target Factor)", size=13, weight=ft.FontWeight.W_500, expand=True), target_f_val_text], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
                         ft.Slider(min=0.60, max=1.00, divisions=40, value=state["target_f"], on_change=on_target_f_change, on_change_end=on_target_f_change_end),
                         pace_badge,
                     ]),
@@ -881,7 +886,7 @@ async def main(page: ft.Page):
                                     icon=ft.Icons.PASTE,
                                     on_click=open_paste_dialog
                                 )
-                            ], col={"xs": 12, "md": 6}, alignment=ft.MainAxisAlignment.END),
+                            ], col={"xs": 12, "md": 6}, alignment=ft.MainAxisAlignment.END, wrap=True)
                         ], vertical_alignment=ft.CrossAxisAlignment.CENTER),
                         ft.Divider(height=10, color=ft.Colors.TRANSPARENT) if available_gpx else ft.Container(),
                         ft.Row([gpx_dropdown]) if available_gpx else ft.Container(),
@@ -889,8 +894,9 @@ async def main(page: ft.Page):
                     padding=16,
                 )
             ),
-        ], spacing=16),
-        padding=10
+        ], spacing=16, scroll=ft.ScrollMode.AUTO, expand=True),
+        padding=16,
+        expand=True
     )
 
     # ----------------------------------------------------
@@ -917,8 +923,9 @@ async def main(page: ft.Page):
 
             ft.Text("📋 Berechnete Intervall-Blöcke (Zonen-Farbcodierung)", size=16, weight=ft.FontWeight.BOLD),
             ft.Card(content=ft.Container(content=intervals_column, padding=12)),
-        ], spacing=16),
-        padding=10
+        ], spacing=16, scroll=ft.ScrollMode.AUTO, expand=True),
+        padding=16,
+        expand=True
     )
 
     # ----------------------------------------------------
@@ -1385,7 +1392,7 @@ async def main(page: ft.Page):
                                 icon=ft.Icons.IMAGE,
                                 on_click=on_pick_qr_image_file
                             ),
-                        ], spacing=12),
+                        ], spacing=12, wrap=True),
                     ], spacing=12),
                     padding=16
                 )
@@ -1417,8 +1424,9 @@ async def main(page: ft.Page):
                 content=ft.OutlinedButton("🔌 Entwickler: Lokaler ADB Push (USB-Kabel)", icon=ft.Icons.USB, on_click=on_adb_push_click),
                 margin=ft.Margin.only(top=10)
             )
-        ], spacing=16),
-        padding=10
+        ], spacing=16, scroll=ft.ScrollMode.AUTO, expand=True),
+        padding=16,
+        expand=True
     )
 
     # ----------------------------------------------------
@@ -1453,7 +1461,8 @@ async def main(page: ft.Page):
     )
 
     route_status_chip = ft.Chip(
-        label=ft.Text(f"📍 {os.path.basename(state['gpx_path'])}", size=12),
+        label=ft.Text(format_chip_route(state['gpx_path']), size=11),
+        tooltip=os.path.basename(state['gpx_path']),
         bgcolor=ft.Colors.with_opacity(0.15, ft.Colors.AMBER)
     )
 
@@ -1469,15 +1478,15 @@ async def main(page: ft.Page):
 
     app_bar = ft.AppBar(
         leading=ft.Icon(ft.Icons.DIRECTIONS_BIKE, color=ft.Colors.AMBER_400, size=28),
-        leading_width=40,
+        leading_width=36,
         title=ft.Column([
-            ft.Text("Power-Planner", size=18, weight=ft.FontWeight.BOLD),
-            ft.Text("Pacing & Nutrition Strategy", size=11, color=ft.Colors.GREY_400),
+            ft.Text("Power-Planner", size=17, weight=ft.FontWeight.BOLD, no_wrap=True),
+            ft.Text("Pacing & Nutrition", size=11, color=ft.Colors.GREY_400, no_wrap=True),
         ], spacing=1),
         actions=[
             route_status_chip,
             theme_btn,
-            ft.Container(width=8)
+            ft.Container(width=4)
         ],
         bgcolor=ft.Colors.with_opacity(0.04, ft.Colors.WHITE) if page.theme_mode == ft.ThemeMode.DARK else ft.Colors.with_opacity(0.02, ft.Colors.BLACK),
     )
