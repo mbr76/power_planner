@@ -22,6 +22,7 @@ os.environ['MPLCONFIGDIR'] = tempfile.gettempdir()
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+import pandas as pd
 
 import flet as ft
 from pacing_optimizer import AdvancedPacingOptimizer
@@ -40,6 +41,12 @@ try:
     import numpy as np
 except ImportError:
     np = None
+
+
+# App Version & Build Metadata
+APP_VERSION = "1.0.0"
+BUILD_NUMBER = "24"
+BUILD_TIMESTAMP = "2026-09-21T09:35:00+02:00"
 
 
 # ==========================================
@@ -62,9 +69,24 @@ def num2deg(xtile, ytile, zoom):
     return (lat_deg, lon_deg)
 
 
-def fetch_map_background(min_lat, max_lat, min_lon, max_lon, zoom=10, is_dark=True):
+_map_tile_cache = {}
+
+
+def fetch_map_background(min_lat, max_lat, min_lon, max_lon, zoom=None, is_dark=False):
     try:
         import urllib.request
+
+        # Dynamic zoom: target between 4 and 16 tiles for optimal sharpness and speed
+        if zoom is None:
+            for z in range(13, 6, -1):
+                x0, y0 = deg2num(max_lat, min_lon, z)
+                x1, y1 = deg2num(min_lat, max_lon, z)
+                if (abs(x1 - x0) + 1) * (abs(y1 - y0) + 1) <= 16:
+                    zoom = z
+                    break
+            if zoom is None:
+                zoom = 8
+
         x0, y0 = deg2num(max_lat, min_lon, zoom)
         x1, y1 = deg2num(min_lat, max_lon, zoom)
 
@@ -76,18 +98,40 @@ def fetch_map_background(min_lat, max_lat, min_lon, max_lon, zoom=10, is_dark=Tr
             return fetch_map_background(min_lat, max_lat, min_lon, max_lon, zoom - 1, is_dark)
 
         combined = Image.new("RGB", (num_x * tile_w, num_y * tile_h))
-        style = "dark_all" if is_dark else "rastertiles/voyager"
+
+        # Free, high-performance basemap services without API key requirements:
+        # Dark: Esri World Dark Gray Base (clean dark canvas designed for GPS/data overlay)
+        # Light: Esri World Topo Map (shaded relief, mountains, contour elevations)
+        if is_dark:
+            base_url = "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile"
+        else:
+            base_url = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile"
 
         for i, x in enumerate(range(min(x0, x1), max(x0, x1) + 1)):
             for j, y in enumerate(range(min(y0, y1), max(y0, y1) + 1)):
-                url = f"https://a.basemaps.cartocdn.com/{style}/{zoom}/{x}/{y}.png"
-                req = urllib.request.Request(url, headers={"User-Agent": "PowerPlanner/2.0"})
+                cache_key = (base_url, zoom, y, x)
+                if cache_key in _map_tile_cache:
+                    combined.paste(_map_tile_cache[cache_key], (i * tile_w, j * tile_h))
+                    continue
+
+                url = f"{base_url}/{zoom}/{y}/{x}"
+                req = urllib.request.Request(url, headers={"User-Agent": "PowerPlanner/2.0 (cycling-app)"})
                 try:
-                    with urllib.request.urlopen(req, timeout=2.5) as resp:
-                        tile_img = Image.open(io.BytesIO(resp.read()))
+                    with urllib.request.urlopen(req, timeout=3.0) as resp:
+                        tile_img = Image.open(io.BytesIO(resp.read())).convert("RGB")
+                        _map_tile_cache[cache_key] = tile_img
                         combined.paste(tile_img, (i * tile_w, j * tile_h))
                 except Exception:
-                    pass
+                    # Fallback to OpenStreetMap standard tile server
+                    try:
+                        osm_url = f"https://tile.openstreetmap.org/{zoom}/{x}/{y}.png"
+                        osm_req = urllib.request.Request(osm_url, headers={"User-Agent": "PowerPlanner/2.0 (cycling-app)"})
+                        with urllib.request.urlopen(osm_req, timeout=3.0) as osm_resp:
+                            tile_img = Image.open(io.BytesIO(osm_resp.read())).convert("RGB")
+                            _map_tile_cache[cache_key] = tile_img
+                            combined.paste(tile_img, (i * tile_w, j * tile_h))
+                    except Exception:
+                        pass
 
         nw_lat, nw_lon = num2deg(min(x0, x1), min(y0, y1), zoom)
         se_lat, se_lon = num2deg(max(x0, x1) + 1, max(y0, y1) + 1, zoom)
@@ -95,6 +139,73 @@ def fetch_map_background(min_lat, max_lat, min_lon, max_lon, zoom=10, is_dark=Tr
         return combined, extent
     except Exception:
         return None, None
+
+
+KNOWN_PASSES = [
+    # Ötztaler & Tirol
+    (47.214, 11.020, "Kühtai"),
+    (47.006, 11.506, "Brenner"),
+    (46.840, 11.319, "Jaufenpass"),
+    (46.905, 11.097, "Timmelsjoch"),
+    (47.290, 10.651, "Hahntennjoch"),
+    (47.129, 10.209, "Arlbergpass"),
+    (47.157, 10.163, "Flexenpass"),
+    (47.280, 10.128, "Hochtannbergpass"),
+    (47.273, 9.907, "Faschinajoch"),
+    (46.918, 10.092, "Silvretta Bielerhöhe"),
+    (47.243, 12.122, "Gerlospass"),
+    (47.083, 12.843, "Großglockner"),
+    (47.472, 12.431, "Kitzbüheler Horn"),
+    (46.928, 10.938, "Ötztaler Gletscherstraße"),
+    # Dolomiten & Italien
+    (46.508, 11.767, "Sellajoch"),
+    (46.550, 11.809, "Grödnerjoch"),
+    (46.488, 11.812, "Pordoijoch"),
+    (46.520, 11.874, "Campolongo"),
+    (46.483, 12.054, "Passo Giau"),
+    (46.519, 12.009, "Falzarego"),
+    (46.528, 11.990, "Valparola"),
+    (46.529, 10.453, "Stilfser Joch"),
+    (46.346, 10.488, "Passo di Gavia"),
+    (46.248, 10.300, "Passo del Mortirolo"),
+    (46.260, 10.583, "Passo del Tonale"),
+    (46.457, 11.868, "Passo Fedaia"),
+    (46.617, 12.298, "Drei Zinnen"),
+    (46.480, 12.937, "Monte Zoncolan"),
+    (45.051, 7.054, "Colle delle Finestre"),
+    # Schweiz
+    (46.556, 8.568, "Gotthardpass"),
+    (46.572, 8.415, "Furkapass"),
+    (46.561, 8.337, "Grimselpass"),
+    (46.729, 8.448, "Sustenpass"),
+    (46.478, 8.385, "Nufenenpass"),
+    (46.659, 8.671, "Oberalppass"),
+    (46.868, 8.855, "Klausenpass"),
+    (46.584, 9.838, "Albulapass"),
+    (46.411, 10.024, "Berninapass"),
+    (46.750, 9.948, "Flüelapass"),
+    (46.473, 9.718, "Julierpass"),
+    (46.505, 9.330, "Splügenpass"),
+    (46.496, 9.171, "San Bernardino"),
+    (46.250, 8.033, "Simplonpass"),
+    # Frankreich & Pyrenäen
+    (45.064, 6.408, "Col du Galibier"),
+    (45.035, 6.428, "Col du Lautaret"),
+    (45.092, 6.069, "Alpe d'Huez"),
+    (45.435, 6.376, "Col de la Madeleine"),
+    (45.227, 6.204, "Col de la Croix de Fer"),
+    (45.240, 6.175, "Col du Glandon"),
+    (44.820, 6.735, "Col d'Izoard"),
+    (44.539, 6.703, "Col de Vars"),
+    (44.321, 6.807, "Cime de la Bonette"),
+    (45.417, 7.031, "Col de l'Iseran"),
+    (45.692, 6.690, "Cormet de Roselend"),
+    (44.174, 5.279, "Mont Ventoux"),
+    (42.908, 0.145, "Col du Tourmalet"),
+    (42.929, 0.334, "Col d'Aspin"),
+    (42.802, 0.453, "Col de Peyresourde"),
+    (42.955, -0.098, "Hautacam"),
+]
 
 
 def format_to_iso_duration(minutes):
@@ -314,8 +425,10 @@ async def main(page: ft.Page):
     }
 
     def format_chip_route(path):
-        base = os.path.basename(path)
-        return f"📍 {base[:11]}..." if len(base) > 14 else f"📍 {base}"
+        base = os.path.splitext(os.path.basename(path))[0]
+        words = base.replace("-", " ").replace("_", " ").split()
+        title = " ".join(w.capitalize() for w in words)
+        return title[:12] + "…" if len(title) > 13 else title
 
     # ----------------------------------------------------
     # Calculation & Chart Rendering Engine (Ultra-Fast)
@@ -337,12 +450,22 @@ async def main(page: ft.Page):
             df_raw = optimizer.generate_raw_pacing_dataframe(df_route)
             df_intervals = optimizer._segment_intervals(df_raw)
             
-            total_hours = df_raw['duration_sec'].sum() / 3600.0
+            total_sec = df_raw['duration_sec'].sum()
+            total_hours = total_sec / 3600.0
             h = math.floor(total_hours)
             m = round((total_hours % 1) * 60)
             sys_weight = state["rider_w"] + state["bike_w"]
             rel_ftp = state["initial_ftp"] / state["rider_w"]
             total_carbs = total_hours * state["carbs_per_hour"]
+
+            # Duration-weighted average target power
+            avg_target_power = float((df_raw['target_power'] * df_raw['duration_sec']).sum() / total_sec) if total_sec > 0 else 0.0
+
+            total_km = float(df_raw['distance_km'].iloc[-1]) if not df_raw.empty else 0.0
+            if 'elevation' in df_route.columns and not df_route['elevation'].isna().all():
+                pos_ele = float(df_route['elevation'].diff().clip(lower=0).sum())
+            else:
+                pos_ele = float((df_route['slope'].clip(lower=0) * (df_route['segment_len_m'] / 100.0)).sum())
 
             state["calc"] = {
                 "optimizer": optimizer,
@@ -353,6 +476,9 @@ async def main(page: ft.Page):
                 "sys_weight_str": f"{sys_weight:.1f} kg",
                 "rel_ftp_str": f"{rel_ftp:.2f} W/kg",
                 "total_carbs_str": f"{total_carbs:.1f} g",
+                "avg_power_str": f"{round(avg_target_power)} W",
+                "total_km": total_km,
+                "pos_ele": pos_ele,
             }
             return True, None
         except Exception as e:
@@ -372,51 +498,122 @@ async def main(page: ft.Page):
         if 'latitude' not in df_route.columns or 'longitude' not in df_route.columns:
             return ""
 
-        is_dark = page.theme_mode == ft.ThemeMode.DARK
-        bg_color = '#18181B' if is_dark else '#FFFFFF'
-        plot_bg = '#1E1E24' if is_dark else '#F9FAFB'
-        text_color = '#E4E4E7' if is_dark else '#1F2937'
-        tick_color = '#A1A1AA' if is_dark else '#6B7280'
-        grid_color = '#333338' if is_dark else '#E5E7EB'
-
         min_lat, max_lat = df_route['latitude'].min(), df_route['latitude'].max()
         min_lon, max_lon = df_route['longitude'].min(), df_route['longitude'].max()
 
-        bg_img, extent = fetch_map_background(min_lat, max_lat, min_lon, max_lon, zoom=10, is_dark=is_dark)
+        # Always use the light topographic map as requested, even in dark mode
+        bg_img, extent = fetch_map_background(min_lat, max_lat, min_lon, max_lon, zoom=None, is_dark=False)
 
-        fig, ax = plt.subplots(figsize=(10, 4.8), dpi=100)
-        fig.patch.set_facecolor(bg_color)
-        ax.set_facecolor(plot_bg)
+        fig = plt.figure(figsize=(10, 5.2), dpi=110)
+        ax = fig.add_axes([0, 0, 1, 1])
+        fig.patch.set_facecolor('#FFFFFF')
+        ax.set_facecolor('#F8FAFC')
 
         if bg_img and extent:
             ax.imshow(bg_img, extent=extent, aspect='equal', origin='upper')
-            # Route line with contrast border
-            ax.plot(df_route['longitude'], df_route['latitude'], color='#000000' if is_dark else '#FFFFFF', linewidth=4.0, alpha=0.6)
-            ax.plot(df_route['longitude'], df_route['latitude'], color='#F59E0B', linewidth=2.8, label='Streckenverlauf')
+
+        # High-contrast route line (white halo + warm amber line)
+        ax.plot(df_route['longitude'], df_route['latitude'], color='#FFFFFF', linewidth=4.5, alpha=0.9, zorder=3)
+        ax.plot(df_route['longitude'], df_route['latitude'], color='#D97706', linewidth=2.8, alpha=0.95, zorder=4)
+
+        # Automatic detection and annotation of significant mountain passes
+        if 'elevation' in df_route.columns and (df_route['elevation'].max() - df_route['elevation'].min() > 80):
+            elev = df_route['elevation'].values
+            n_pts = len(elev)
+            w = max(5, n_pts // 100)
+            smooth = pd.Series(elev).rolling(window=w, center=True).mean().bfill().ffill().values
+            min_prom = max(120.0, (elev.max() - elev.min()) * 0.12)
+            min_dist = max(10, n_pts // 25)
+
+            candidates = [i for i in range(1, n_pts - 1) if smooth[i] > smooth[i - 1] and smooth[i] >= smooth[i + 1]]
+            peak_indices = []
+            for idx in sorted(candidates, key=lambda i: smooth[i], reverse=True):
+                if any(abs(idx - chosen) < min_dist for chosen in peak_indices):
+                    continue
+                start = max(0, idx - min_dist)
+                end = min(n_pts, idx + min_dist)
+                if smooth[idx] - np.min(smooth[start:end]) >= min_prom:
+                    peak_indices.append(idx)
+            peak_indices.sort()
+
+            span_lon = max_lon - min_lon
+            for p_idx in peak_indices:
+                plat = df_route.iloc[p_idx]['latitude']
+                plon = df_route.iloc[p_idx]['longitude']
+                pele = df_route.iloc[p_idx]['elevation']
+
+                pass_name = None
+                for k_lat, k_lon, k_name in KNOWN_PASSES:
+                    if (plat - k_lat) ** 2 + (plon - k_lon) ** 2 < 0.04 ** 2:
+                        pass_name = k_name
+                        break
+
+                ele_str = f"{int(round(pele)):,}".replace(',', '.')
+                label = f"▲ {pass_name} ({ele_str} m)" if pass_name else f"▲ {ele_str} m"
+
+                # Smart horizontal alignment to avoid clipping near map edges
+                if span_lon > 0 and plon > max_lon - span_lon * 0.15:
+                    ha, offset = 'right', (-10, 10)
+                elif span_lon > 0 and plon < min_lon + span_lon * 0.15:
+                    ha, offset = 'left', (10, 10)
+                else:
+                    ha, offset = 'center', (0, 12)
+
+                ax.scatter(plon, plat, color='#EA580C', s=55, zorder=7, edgecolors='#FFFFFF', linewidths=1.8)
+                ax.annotate(
+                    label,
+                    xy=(plon, plat),
+                    xytext=offset,
+                    textcoords='offset points',
+                    fontsize=8.5,
+                    fontweight='bold',
+                    color='#9A3412',
+                    ha=ha,
+                    va='bottom',
+                    zorder=8,
+                    bbox=dict(boxstyle='round,pad=0.35', facecolor='#FFFFFF', edgecolor='#FB923C', alpha=0.92, linewidth=1.2)
+                )
+
+        # Start and Ziel badges
+        s_lon, s_lat = df_route['longitude'].iloc[0], df_route['latitude'].iloc[0]
+        e_lon, e_lat = df_route['longitude'].iloc[-1], df_route['latitude'].iloc[-1]
+        is_loop = ((s_lon - e_lon) ** 2 + (s_lat - e_lat) ** 2) < 0.015 ** 2
+
+        if is_loop:
+            ax.scatter(s_lon, s_lat, color='#059669', s=70, zorder=7, edgecolors='#FFFFFF', linewidths=2.0)
+            ax.annotate(
+                'Start / Ziel',
+                xy=(s_lon, s_lat),
+                xytext=(14, 0),
+                textcoords='offset points',
+                fontsize=9,
+                fontweight='bold',
+                color='#065F46',
+                ha='left',
+                va='center',
+                zorder=8,
+                bbox=dict(boxstyle='round,pad=0.35', facecolor='#ECFDF5', edgecolor='#10B981', alpha=0.95, linewidth=1.2)
+            )
         else:
-            scatter = ax.scatter(df_route['longitude'], df_route['latitude'], c=df_route['elevation'], cmap='turbo', s=3.5, alpha=0.9, rasterized=True)
-            ax.plot(df_route['longitude'], df_route['latitude'], color='#FFFFFF' if is_dark else '#000000', linewidth=0.5, alpha=0.3)
-            cbar = fig.colorbar(scatter, ax=ax, pad=0.02)
-            cbar.set_label('Höhe über NN (m)', color=text_color, fontsize=9, fontweight='bold')
-            cbar.ax.yaxis.set_tick_params(color=tick_color)
-            plt.setp(plt.getp(cbar.ax.axes, 'yticklabels'), color=tick_color)
+            ax.scatter(s_lon, s_lat, color='#059669', s=70, zorder=7, edgecolors='#FFFFFF', linewidths=2.0)
+            ax.annotate('Start', xy=(s_lon, s_lat), xytext=(12, 0), textcoords='offset points', fontsize=9, fontweight='bold', color='#065F46', ha='left', va='center', zorder=8, bbox=dict(boxstyle='round,pad=0.3', facecolor='#ECFDF5', edgecolor='#10B981', alpha=0.95, linewidth=1.2))
+            ax.scatter(e_lon, e_lat, color='#DC2626', s=70, zorder=7, edgecolors='#FFFFFF', linewidths=2.0)
+            ax.annotate('Ziel', xy=(e_lon, e_lat), xytext=(12, 0), textcoords='offset points', fontsize=9, fontweight='bold', color='#991B1B', ha='left', va='center', zorder=8, bbox=dict(boxstyle='round,pad=0.3', facecolor='#FEF2F2', edgecolor='#EF4444', alpha=0.95, linewidth=1.2))
 
-        # Start and End markers
-        ax.scatter(df_route['longitude'].iloc[0], df_route['latitude'].iloc[0], color='#10B981', s=90, zorder=6, edgecolors='#FFFFFF', linewidths=1.5, label='Start')
-        ax.scatter(df_route['longitude'].iloc[-1], df_route['latitude'].iloc[-1], color='#EF4444', s=90, marker='s', zorder=6, edgecolors='#FFFFFF', linewidths=1.5, label='Ziel')
+        # View boundaries with comfortable margin
+        pad_lon = (max_lon - min_lon) * 0.06 if max_lon > min_lon else 0.02
+        pad_lat = (max_lat - min_lat) * 0.08 if max_lat > min_lat else 0.02
+        ax.set_xlim(min_lon - pad_lon, max_lon + pad_lon)
+        ax.set_ylim(min_lat - pad_lat, max_lat + pad_lat)
 
-        ax.set_xlim(min_lon - 0.04, max_lon + 0.04)
-        ax.set_ylim(min_lat - 0.03, max_lat + 0.03)
+        # Discreet attribution
+        ax.text(0.012, 0.015, '© Esri Topo · OpenStreetMap', transform=ax.transAxes, color='#4B5563', fontsize=7.5, alpha=0.75, zorder=9, bbox=dict(boxstyle='round,pad=0.25', facecolor='#FFFFFF', edgecolor='none', alpha=0.65))
 
-        ax.set_xlabel('Längengrad (°E)', color=text_color, fontsize=9, fontweight='bold')
-        ax.set_ylabel('Breitengrad (°N)', color=text_color, fontsize=9, fontweight='bold')
-        ax.tick_params(colors=tick_color, labelsize=8)
-        ax.grid(True, linestyle='--', alpha=0.25, color=grid_color)
-        ax.legend(facecolor=plot_bg, edgecolor=grid_color, labelcolor=text_color, loc='upper right', fontsize=9)
+        # Borderless, clean card presentation without coordinate frames
+        ax.set_axis_off()
 
         buf = io.BytesIO()
-        plt.tight_layout()
-        plt.savefig(buf, format='png', bbox_inches='tight', facecolor=fig.get_facecolor())
+        plt.savefig(buf, format='png', bbox_inches='tight', pad_inches=0, facecolor=fig.get_facecolor())
         plt.close(fig)
         return base64.b64encode(buf.getvalue()).decode('utf-8')
 
@@ -502,48 +699,81 @@ async def main(page: ft.Page):
     # UI Component Builders
     # ----------------------------------------------------
 
-    # Pace Traffic Light Label
-    pace_badge_text = ft.Text(size=12, weight=ft.FontWeight.BOLD)
+    # Pace Traffic Light Label & Coach Pill
+    pace_badge_text = ft.Text(size=12, weight=ft.FontWeight.BOLD, text_align=ft.TextAlign.CENTER)
+    pace_badge_subtext = ft.Text(size=10, color=ft.Colors.GREY_400, text_align=ft.TextAlign.CENTER)
     pace_badge = ft.Container(
-        content=pace_badge_text,
-        padding=ft.Padding.symmetric(horizontal=10, vertical=6),
-        border_radius=8,
+        content=ft.Column([
+            pace_badge_text,
+            pace_badge_subtext,
+        ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=2),
+        padding=ft.Padding.symmetric(horizontal=12, vertical=8),
+        border_radius=12,
+        alignment=ft.Alignment(0, 0),
     )
 
     def update_pace_badge():
         tf = state["target_f"]
+        pct = int(tf * 100)
         if tf < 0.71:
-            pace_badge_text.value = "🟢 Sehr defensiv (Genussfahrt / Regenerativ)"
-            pace_badge.bgcolor = ft.Colors.with_opacity(0.2, ft.Colors.GREEN)
+            pace_badge_text.value = f"🟢 Sehr defensiv ({pct}% FTP)"
+            pace_badge_subtext.value = "Genussfahrt & Regeneration / Minimale Glykogen-Ermüdung"
+            pace_badge.bgcolor = ft.Colors.with_opacity(0.15, ft.Colors.GREEN)
+            pace_badge.border = ft.Border.all(1, ft.Colors.with_opacity(0.3, ft.Colors.GREEN))
         elif tf < 0.78:
-            pace_badge_text.value = "🟢 Solide Ausdauer Pace (Marathon-Standard)"
-            pace_badge.bgcolor = ft.Colors.with_opacity(0.2, ft.Colors.GREEN)
+            pace_badge_text.value = f"🟢 Solide Ausdauer Pace ({pct}% FTP)"
+            pace_badge_subtext.value = "Marathon-Standard / Stabiler W'-Speicher über viele Stunden"
+            pace_badge.bgcolor = ft.Colors.with_opacity(0.15, ft.Colors.GREEN)
+            pace_badge.border = ft.Border.all(1, ft.Colors.with_opacity(0.3, ft.Colors.GREEN))
         elif tf < 0.84:
-            pace_badge_text.value = "🟡 Ambitioniert / Sportlich (Hohe Ermüdung)"
-            pace_badge.bgcolor = ft.Colors.with_opacity(0.2, ft.Colors.AMBER)
+            pace_badge_text.value = f"🟡 Ambitioniert / Sportlich ({pct}% FTP)"
+            pace_badge_subtext.value = "Hohe metabolische Beanspruchung / Disziplinierte Verpflegung nötig"
+            pace_badge.bgcolor = ft.Colors.with_opacity(0.15, ft.Colors.AMBER)
+            pace_badge.border = ft.Border.all(1, ft.Colors.with_opacity(0.3, ft.Colors.AMBER))
         else:
-            pace_badge_text.value = "🔴 Renn-Pace / Elite (Sehr hart, Ausbelastung)"
-            pace_badge.bgcolor = ft.Colors.with_opacity(0.2, ft.Colors.RED)
+            pace_badge_text.value = f"🔴 Renn-Pace / Elite ({pct}% FTP)"
+            pace_badge_subtext.value = "Sehr hart / Hohe W'-Erschöpfung & Ausbelastung an Anstiegen"
+            pace_badge.bgcolor = ft.Colors.with_opacity(0.15, ft.Colors.RED)
+            pace_badge.border = ft.Border.all(1, ft.Colors.with_opacity(0.3, ft.Colors.RED))
 
     update_pace_badge()
 
-    # Dynamic KPI Cards
-    kpi_time = ft.Text(state["calc"]["duration_str"] if state["calc"] else "-", size=20, weight=ft.FontWeight.BOLD, color=ft.Colors.AMBER_400)
-    kpi_weight = ft.Text(state["calc"]["sys_weight_str"] if state["calc"] else "-", size=20, weight=ft.FontWeight.BOLD, color=ft.Colors.BLUE_400)
-    kpi_rel_ftp = ft.Text(state["calc"]["rel_ftp_str"] if state["calc"] else "-", size=20, weight=ft.FontWeight.BOLD, color=ft.Colors.GREEN_400)
-    kpi_carbs = ft.Text(state["calc"]["total_carbs_str"] if state["calc"] else "-", size=20, weight=ft.FontWeight.BOLD, color=ft.Colors.PURPLE_400)
+    # Dynamic KPI Cards (Analysis Tab)
+    kpi_time = ft.Text(state["calc"]["duration_str"] if state["calc"] else "-", size=17, weight=ft.FontWeight.BOLD, color=ft.Colors.AMBER_400)
+    kpi_weight = ft.Text(state["calc"]["sys_weight_str"] if state["calc"] else "-", size=17, weight=ft.FontWeight.BOLD, color=ft.Colors.BLUE_400)
+    kpi_rel_ftp = ft.Text(state["calc"]["rel_ftp_str"] if state["calc"] else "-", size=17, weight=ft.FontWeight.BOLD, color=ft.Colors.GREEN_400)
+    kpi_carbs = ft.Text(state["calc"]["total_carbs_str"] if state["calc"] else "-", size=17, weight=ft.FontWeight.BOLD, color=ft.Colors.PURPLE_400)
 
-    def make_kpi_card(icon, label, value_control, col_span=6):
+    # Hero Live-KPI Cards (Setup Tab Live-Summary)
+    hero_kpi_time = ft.Text(state["calc"]["duration_str"] if state["calc"] else "-", size=17, weight=ft.FontWeight.BOLD, color=ft.Colors.AMBER_400)
+    hero_kpi_power = ft.Text(state["calc"]["avg_power_str"] if state["calc"] else "-", size=17, weight=ft.FontWeight.BOLD, color=ft.Colors.LIGHT_BLUE_400)
+    hero_kpi_rel_ftp = ft.Text(state["calc"]["rel_ftp_str"] if state["calc"] else "-", size=17, weight=ft.FontWeight.BOLD, color=ft.Colors.GREEN_400)
+    hero_kpi_carbs = ft.Text(state["calc"]["total_carbs_str"] if state["calc"] else "-", size=17, weight=ft.FontWeight.BOLD, color=ft.Colors.PURPLE_400)
+
+    # Route summary badges for Setup Tab Route Card
+    route_dist_badge = ft.Text(f"{state['calc']['total_km']:.1f} km" if state["calc"] and "total_km" in state["calc"] else "-", size=13, weight=ft.FontWeight.BOLD, color=ft.Colors.AMBER_400)
+    route_ele_badge = ft.Text(f"{int(state['calc']['pos_ele'])} hm" if state["calc"] and "pos_ele" in state["calc"] else "-", size=13, weight=ft.FontWeight.BOLD, color=ft.Colors.LIGHT_BLUE_400)
+    route_name_badge = ft.Text(os.path.basename(state['gpx_path']), size=13, weight=ft.FontWeight.BOLD, no_wrap=True)
+
+    def make_kpi_card(icon, label, value_control, color, col_span=6):
         return ft.Container(
             content=ft.Column([
-                ft.Row([ft.Icon(icon, size=18, color=ft.Colors.GREY_400), ft.Text(label, size=12, color=ft.Colors.GREY_400, expand=True)]),
+                ft.Row([
+                    ft.Container(
+                        content=ft.Icon(icon, size=13, color=color),
+                        bgcolor=ft.Colors.with_opacity(0.18, color),
+                        padding=3,
+                        border_radius=6,
+                    ),
+                    ft.Text(label, size=11, color=ft.Colors.GREY_300, weight=ft.FontWeight.W_500, expand=True, no_wrap=False)
+                ], spacing=5, vertical_alignment=ft.CrossAxisAlignment.CENTER),
                 value_control
-            ], spacing=4),
-            padding=14,
-            border_radius=12,
-            bgcolor=ft.Colors.with_opacity(0.08, ft.Colors.WHITE) if page.theme_mode == ft.ThemeMode.DARK else ft.Colors.with_opacity(0.04, ft.Colors.BLACK),
-            border=ft.Border.all(1, ft.Colors.with_opacity(0.12, ft.Colors.WHITE) if page.theme_mode == ft.ThemeMode.DARK else ft.Colors.with_opacity(0.1, ft.Colors.BLACK)),
-            col={"xs": 12, "sm": col_span, "md": 3},
+            ], spacing=2),
+            padding=ft.Padding.symmetric(horizontal=10, vertical=8),
+            border_radius=14,
+            bgcolor=ft.Colors.with_opacity(0.10, color) if page.theme_mode == ft.ThemeMode.DARK else ft.Colors.with_opacity(0.05, color),
+            border=ft.Border.all(1, ft.Colors.with_opacity(0.22, color) if page.theme_mode == ft.ThemeMode.DARK else ft.Colors.with_opacity(0.12, color)),
+            col={"xs": 6, "sm": col_span, "md": 3},
         )
 
     # Chart Controls
@@ -563,39 +793,48 @@ async def main(page: ft.Page):
         for _, row in df_inv.iterrows():
             pct = float(row['pct_ftp'])
             if pct < 55:
-                z_color, z_bg, z_name = ft.Colors.GREY_400, ft.Colors.with_opacity(0.15, ft.Colors.GREY), "Z1 Recovery"
+                z_color, z_name = ft.Colors.BLUE_GREY_400, "Z1 Recovery"
             elif pct < 75:
-                z_color, z_bg, z_name = ft.Colors.GREEN_400, ft.Colors.with_opacity(0.15, ft.Colors.GREEN), "Z2 Endurance"
+                z_color, z_name = ft.Colors.LIGHT_BLUE_400, "Z2 Endurance"
             elif pct < 90:
-                z_color, z_bg, z_name = ft.Colors.AMBER_400, ft.Colors.with_opacity(0.15, ft.Colors.AMBER), "Z3 Tempo"
+                z_color, z_name = ft.Colors.GREEN_400, "Z3 Tempo"
             elif pct < 105:
-                z_color, z_bg, z_name = ft.Colors.ORANGE_400, ft.Colors.with_opacity(0.15, ft.Colors.ORANGE), "Z4 Threshold"
+                z_color, z_name = ft.Colors.AMBER_400, "Z4 Threshold"
             elif pct < 120:
-                z_color, z_bg, z_name = ft.Colors.RED_400, ft.Colors.with_opacity(0.15, ft.Colors.RED), "Z5 VO2Max"
+                z_color, z_name = ft.Colors.ORANGE_400, "Z5 VO2Max"
             else:
-                z_color, z_bg, z_name = ft.Colors.PURPLE_400, ft.Colors.with_opacity(0.15, ft.Colors.PURPLE), "Z6 Anaerobic"
+                z_color, z_name = ft.Colors.RED_400, "Z6 Anaerobic"
 
             dur_str = format_to_iso_duration(row['duration_min'])
+            dist_km = row['end_km'] - row['start_km']
             rows.append(
                 ft.Container(
-                    content=ft.ResponsiveRow([
-                        ft.Text(f"{row['start_km']:.2f} - {row['end_km']:.2f} km", col={"xs": 4, "sm": 3}, size=13, weight=ft.FontWeight.W_500),
-                        ft.Text(f"⏱️ {dur_str}", col={"xs": 3, "sm": 2}, size=13),
-                        ft.Text(f"⚡ {int(row['target_watt'])} W", col={"xs": 2, "sm": 2}, size=13, weight=ft.FontWeight.BOLD),
-                        ft.Container(
-                            content=ft.Text(f"{z_name} ({pct:.0f}%)", size=11, weight=ft.FontWeight.BOLD, color=z_color),
-                            bgcolor=z_bg,
-                            padding=ft.Padding.symmetric(horizontal=8, vertical=3),
-                            border_radius=6,
-                            col={"xs": 3, "sm": 5}
-                        )
-                    ], vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                    content=ft.Row([
+                        ft.Container(width=4, height=42, bgcolor=z_color, border_radius=2),
+                        ft.Column([
+                            ft.Row([
+                                ft.Text(f"{row['start_km']:.1f} – {row['end_km']:.1f} km", size=13, weight=ft.FontWeight.BOLD),
+                                ft.Text(f"({dist_km:.1f} km)", size=11, color=ft.Colors.GREY_400),
+                            ], spacing=4),
+                            ft.Text(f"⏱️ {dur_str}", size=11, color=ft.Colors.GREY_400),
+                        ], spacing=2, expand=True),
+                        ft.Column([
+                            ft.Text(f"{int(row['target_watt'])} W", size=15, weight=ft.FontWeight.BOLD, text_align=ft.TextAlign.RIGHT),
+                            ft.Container(
+                                content=ft.Text(f"{z_name} ({pct:.0f}%)", size=10, weight=ft.FontWeight.BOLD, color=z_color),
+                                bgcolor=ft.Colors.with_opacity(0.12, z_color),
+                                padding=ft.Padding.symmetric(horizontal=6, vertical=2),
+                                border_radius=6,
+                            )
+                        ], spacing=2, horizontal_alignment=ft.CrossAxisAlignment.END)
+                    ], spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER),
                     padding=ft.Padding.symmetric(horizontal=12, vertical=8),
-                    border_radius=8,
+                    border_radius=12,
                     bgcolor=ft.Colors.with_opacity(0.04, ft.Colors.WHITE) if page.theme_mode == ft.ThemeMode.DARK else ft.Colors.with_opacity(0.02, ft.Colors.BLACK),
+                    border=ft.Border.all(1, ft.Colors.with_opacity(0.06, ft.Colors.WHITE) if page.theme_mode == ft.ThemeMode.DARK else ft.Colors.with_opacity(0.06, ft.Colors.BLACK)),
                 )
             )
-        return ft.Column(rows, spacing=6)
+        return ft.Column(rows, spacing=8)
 
     intervals_column.controls = [build_intervals_table()]
 
@@ -603,10 +842,20 @@ async def main(page: ft.Page):
         state["karoo_json_str"] = None  # Invalidate lazy Karoo JSON on changes
         success, err = run_calculation()
         if success and state["calc"]:
-            kpi_time.value = state["calc"]["duration_str"]
-            kpi_weight.value = state["calc"]["sys_weight_str"]
-            kpi_rel_ftp.value = state["calc"]["rel_ftp_str"]
-            kpi_carbs.value = state["calc"]["total_carbs_str"]
+            calc = state["calc"]
+            kpi_time.value = calc["duration_str"]
+            kpi_weight.value = calc["sys_weight_str"]
+            kpi_rel_ftp.value = calc["rel_ftp_str"]
+            kpi_carbs.value = calc["total_carbs_str"]
+            
+            hero_kpi_time.value = calc["duration_str"]
+            hero_kpi_power.value = calc["avg_power_str"]
+            hero_kpi_rel_ftp.value = calc["rel_ftp_str"]
+            hero_kpi_carbs.value = calc["total_carbs_str"]
+
+            route_dist_badge.value = f"{calc['total_km']:.1f} km"
+            route_ele_badge.value = f"{int(calc['pos_ele'])} hm"
+            route_name_badge.value = os.path.basename(state['gpx_path'])
             
             if route_changed or state.get("map_bytes") is None:
                 state["map_bytes"] = render_route_map()
@@ -622,7 +871,7 @@ async def main(page: ft.Page):
                 state["charts_dirty"] = True
 
             update_pace_badge()
-            route_status_chip.label = ft.Text(format_chip_route(state['gpx_path']), size=11)
+            route_status_chip_text.value = format_chip_route(state['gpx_path'])
             route_status_chip.tooltip = os.path.basename(state['gpx_path'])
             page.update()
         else:
@@ -807,7 +1056,7 @@ async def main(page: ft.Page):
             state["base_filename"] = os.path.splitext(os.path.basename(selected))[0]
             state["df_route"] = None
             state["map_bytes"] = None
-            gpx_file_text.value = f"Aktuelle Route: {os.path.basename(selected)}"
+            gpx_file_text.value = f"Streckendatei: {os.path.basename(selected)}"
             refresh_ui(route_changed=True, force_charts=True)
             show_snack(f"✅ Route gewechselt: {os.path.basename(selected)}", bgcolor=ft.Colors.GREEN_700, icon=ft.Icons.CHECK_CIRCLE)
 
@@ -818,82 +1067,194 @@ async def main(page: ft.Page):
         expand=True,
         on_select=on_select_local_gpx
     )
-    gpx_file_text = ft.Text(f"Aktuelle Route: {os.path.basename(state['gpx_path'])}", size=13, color=ft.Colors.GREY_300)
+    gpx_file_text = ft.Text("Aktive GPS-Strecke", size=11, color=ft.Colors.GREY_400)
+
+    def make_hero_card(icon, label, value_control, color):
+        return ft.Container(
+            content=ft.Column([
+                ft.Row([
+                    ft.Container(
+                        content=ft.Icon(icon, size=13, color=color),
+                        bgcolor=ft.Colors.with_opacity(0.18, color),
+                        padding=3,
+                        border_radius=6,
+                    ),
+                    ft.Text(label, size=11, color=ft.Colors.GREY_300, weight=ft.FontWeight.W_500, expand=True, no_wrap=False)
+                ], spacing=6, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                value_control
+            ], spacing=2),
+            padding=ft.Padding.symmetric(horizontal=10, vertical=8),
+            border_radius=14,
+            bgcolor=ft.Colors.with_opacity(0.10, color) if page.theme_mode == ft.ThemeMode.DARK else ft.Colors.with_opacity(0.05, color),
+            border=ft.Border.all(1, ft.Colors.with_opacity(0.22, color) if page.theme_mode == ft.ThemeMode.DARK else ft.Colors.with_opacity(0.12, color)),
+            col={"xs": 6, "sm": 3},
+        )
+
+    hero_dashboard = ft.Container(
+        content=ft.Column([
+            ft.ResponsiveRow([
+                make_hero_card(ft.Icons.TIMER_OUTLINED, "Zielzeit", hero_kpi_time, ft.Colors.AMBER_400),
+                make_hero_card(ft.Icons.BOLT_OUTLINED, "Ø Leistung", hero_kpi_power, ft.Colors.LIGHT_BLUE_400),
+                make_hero_card(ft.Icons.SPEED, "W/kg", hero_kpi_rel_ftp, ft.Colors.GREEN_400),
+                make_hero_card(ft.Icons.RESTAURANT_OUTLINED, "Gesamt-KH", hero_kpi_carbs, ft.Colors.PURPLE_400),
+            ], spacing=8, run_spacing=8),
+            ft.Divider(height=8, color=ft.Colors.TRANSPARENT),
+            ft.Row([
+                ft.Container(
+                    content=ft.Icon(ft.Icons.TUNE, size=16, color=ft.Colors.AMBER_400),
+                    bgcolor=ft.Colors.with_opacity(0.15, ft.Colors.AMBER),
+                    border_radius=8,
+                    padding=6,
+                ),
+                ft.Text("Fahrereinstellungen & Pacing", size=15, weight=ft.FontWeight.BOLD),
+            ], spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+        ], spacing=4),
+    )
+
+    def make_slider_header(icon, label, val_text_control, color):
+        return ft.Column([
+            ft.Row([
+                ft.Icon(icon, size=16, color=color),
+                ft.Text(label, size=13, weight=ft.FontWeight.W_500, expand=True, no_wrap=False),
+            ], spacing=6),
+            ft.Row([
+                ft.Container(
+                    content=val_text_control,
+                    bgcolor=ft.Colors.with_opacity(0.12, color),
+                    border=ft.Border.all(1, ft.Colors.with_opacity(0.25, color)),
+                    padding=ft.Padding.symmetric(horizontal=8, vertical=3),
+                    border_radius=8,
+                )
+            ]),
+        ], spacing=4)
+
+    card1 = ft.Card(
+        content=ft.Container(
+            content=ft.Column([
+                make_slider_header(ft.Icons.BOLT, "Start-FTP", ftp_val_text, ft.Colors.AMBER_400),
+                ft.Slider(min=100, max=500, divisions=80, value=state["initial_ftp"], active_color=ft.Colors.AMBER_400, on_change=on_ftp_change, on_change_end=on_ftp_change_end),
+
+                ft.Divider(height=10, color=ft.Colors.TRANSPARENT),
+                make_slider_header(ft.Icons.BATTERY_CHARGING_FULL, "W'-Kapazität (Akku)", wprime_val_text, ft.Colors.RED_400),
+                ft.Slider(min=10000, max=30000, divisions=20, value=state["w_prime"], active_color=ft.Colors.RED_400, on_change=on_wprime_change, on_change_end=on_wprime_change_end),
+
+                ft.Divider(height=10, color=ft.Colors.TRANSPARENT),
+                ft.ResponsiveRow([
+                    ft.Column([
+                        make_slider_header(ft.Icons.PERSON, "Fahrergewicht", rider_w_val_text, ft.Colors.BLUE_400),
+                        ft.Slider(min=40, max=130, divisions=90, value=state["rider_w"], active_color=ft.Colors.BLUE_400, on_change=on_rider_w_change, on_change_end=on_rider_w_change_end),
+                    ], col={"xs": 12, "md": 6}),
+                    ft.Column([
+                        make_slider_header(ft.Icons.DIRECTIONS_BIKE, "Fahrrad & Ausrüstung", bike_w_val_text, ft.Colors.CYAN_400),
+                        ft.Slider(min=5, max=20, divisions=30, value=state["bike_w"], active_color=ft.Colors.CYAN_400, on_change=on_bike_w_change, on_change_end=on_bike_w_change_end),
+                    ], col={"xs": 12, "md": 6}),
+                ]),
+            ]),
+            padding=16,
+            border_radius=16,
+        ),
+        shape=ft.RoundedRectangleBorder(radius=16),
+    )
+
+    section2_header = ft.Row([
+        ft.Container(
+            content=ft.Icon(ft.Icons.ECO, size=16, color=ft.Colors.GREEN_400),
+            bgcolor=ft.Colors.with_opacity(0.15, ft.Colors.GREEN),
+            border_radius=8,
+            padding=6,
+        ),
+        ft.Text("Ernährungsstrategie & Intensität", size=15, weight=ft.FontWeight.BOLD),
+    ], spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER)
+
+    card2 = ft.Card(
+        content=ft.Container(
+            content=ft.Column([
+                make_slider_header(ft.Icons.RESTAURANT, "Kohlenhydrate (g/h)", carbs_val_text, ft.Colors.GREEN_400),
+                ft.Slider(min=20, max=120, divisions=20, value=state["carbs_per_hour"], active_color=ft.Colors.GREEN_400, on_change=on_carbs_change, on_change_end=on_carbs_change_end),
+
+                ft.Divider(height=10, color=ft.Colors.TRANSPARENT),
+                make_slider_header(ft.Icons.SPEED, "Intensitätsfaktor (Target Factor)", target_f_val_text, ft.Colors.ORANGE_400),
+                ft.Slider(min=0.60, max=1.00, divisions=40, value=state["target_f"], active_color=ft.Colors.ORANGE_400, on_change=on_target_f_change, on_change_end=on_target_f_change_end),
+                pace_badge,
+            ]),
+            padding=16,
+            border_radius=16,
+        ),
+        shape=ft.RoundedRectangleBorder(radius=16),
+    )
+
+    section3_header = ft.Row([
+        ft.Container(
+            content=ft.Icon(ft.Icons.ROUTE, size=16, color=ft.Colors.LIGHT_BLUE_400),
+            bgcolor=ft.Colors.with_opacity(0.15, ft.Colors.LIGHT_BLUE),
+            border_radius=8,
+            padding=6,
+        ),
+        ft.Text("Streckenprofil & GPX-Import", size=15, weight=ft.FontWeight.BOLD),
+    ], spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER)
+
+    card3 = ft.Card(
+        content=ft.Container(
+            content=ft.Column([
+                ft.Row([
+                    ft.Icon(ft.Icons.MAP_OUTLINED, size=20, color=ft.Colors.LIGHT_BLUE_400),
+                    ft.Column([
+                        route_name_badge,
+                        gpx_file_text,
+                    ], spacing=2, expand=True),
+                ], vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                ft.Row([
+                    ft.Container(
+                        content=ft.Row([
+                            ft.Icon(ft.Icons.STRAIGHTEN, size=13, color=ft.Colors.AMBER_400),
+                            route_dist_badge,
+                        ], spacing=4),
+                        bgcolor=ft.Colors.with_opacity(0.12, ft.Colors.AMBER),
+                        padding=ft.Padding.symmetric(horizontal=10, vertical=4),
+                        border_radius=8,
+                    ),
+                    ft.Container(
+                        content=ft.Row([
+                            ft.Icon(ft.Icons.LANDSCAPE, size=13, color=ft.Colors.LIGHT_BLUE_400),
+                            route_ele_badge,
+                        ], spacing=4),
+                        bgcolor=ft.Colors.with_opacity(0.12, ft.Colors.LIGHT_BLUE),
+                        padding=ft.Padding.symmetric(horizontal=10, vertical=4),
+                        border_radius=8,
+                    ),
+                ], spacing=8),
+                ft.Divider(height=6, color=ft.Colors.TRANSPARENT),
+                ft.Row([
+                    ft.FilledButton(
+                        "📁 GPX auswählen (.gpx)",
+                        icon=ft.Icons.UPLOAD_FILE,
+                        on_click=on_pick_gpx_click,
+                        style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10)),
+                    ),
+                    ft.OutlinedButton(
+                        "📋 GPX einfügen",
+                        icon=ft.Icons.PASTE,
+                        on_click=open_paste_dialog,
+                        style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10)),
+                    )
+                ], wrap=True, spacing=8),
+                ft.Divider(height=10, color=ft.Colors.TRANSPARENT) if available_gpx else ft.Container(),
+                ft.Row([gpx_dropdown]) if available_gpx else ft.Container(),
+            ]),
+            padding=16,
+            border_radius=16,
+        ),
+        shape=ft.RoundedRectangleBorder(radius=16),
+    )
 
     tab_setup_view = ft.Container(
         content=ft.Column([
-            ft.Text("🔧 Fahrereinstellungen & Pacing-Parameter", size=16, weight=ft.FontWeight.BOLD),
-            
-            ft.Card(
-                content=ft.Container(
-                    content=ft.Column([
-                        ft.Row([ft.Text("Start-FTP (FTP)", size=13, weight=ft.FontWeight.W_500, expand=True), ftp_val_text], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
-                        ft.Slider(min=100, max=500, divisions=80, value=state["initial_ftp"], on_change=on_ftp_change, on_change_end=on_ftp_change_end),
-
-                        ft.Divider(height=10, color=ft.Colors.TRANSPARENT),
-                        ft.Row([ft.Text("W'-Kapazität (Anaerober Akku)", size=13, weight=ft.FontWeight.W_500, expand=True), wprime_val_text], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
-                        ft.Slider(min=10000, max=30000, divisions=20, value=state["w_prime"], on_change=on_wprime_change, on_change_end=on_wprime_change_end),
-
-                        ft.Divider(height=10, color=ft.Colors.TRANSPARENT),
-                        ft.ResponsiveRow([
-                            ft.Column([
-                                ft.Row([ft.Text("Fahrergewicht", size=13, expand=True), rider_w_val_text], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
-                                ft.Slider(min=40, max=130, divisions=90, value=state["rider_w"], on_change=on_rider_w_change, on_change_end=on_rider_w_change_end),
-                            ], col={"xs": 12, "md": 6}),
-                            ft.Column([
-                                ft.Row([ft.Text("Fahrrad & Ausrüstung", size=13, expand=True), bike_w_val_text], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
-                                ft.Slider(min=5, max=20, divisions=30, value=state["bike_w"], on_change=on_bike_w_change, on_change_end=on_bike_w_change_end),
-                            ], col={"xs": 12, "md": 6}),
-                        ]),
-                    ]),
-                    padding=16,
-                )
-            ),
-
-            ft.Text("🍏 Ernährungsstrategie & Intensität", size=16, weight=ft.FontWeight.BOLD),
-            ft.Card(
-                content=ft.Container(
-                    content=ft.Column([
-                        ft.Row([ft.Text("Kohlenhydrate (g/h)", size=13, weight=ft.FontWeight.W_500, expand=True), carbs_val_text], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
-                        ft.Slider(min=20, max=120, divisions=20, value=state["carbs_per_hour"], on_change=on_carbs_change, on_change_end=on_carbs_change_end),
-
-                        ft.Divider(height=10, color=ft.Colors.TRANSPARENT),
-                        ft.Row([ft.Text("Intensitätsfaktor (Target Factor)", size=13, weight=ft.FontWeight.W_500, expand=True), target_f_val_text], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
-                        ft.Slider(min=0.60, max=1.00, divisions=40, value=state["target_f"], on_change=on_target_f_change, on_change_end=on_target_f_change_end),
-                        pace_badge,
-                    ]),
-                    padding=16,
-                )
-            ),
-
-            ft.Text("🛣️ Streckenprofil (GPX-Import)", size=16, weight=ft.FontWeight.BOLD),
-            ft.Card(
-                content=ft.Container(
-                    content=ft.Column([
-                        ft.ResponsiveRow([
-                            ft.Column([
-                                ft.Text("Eigene GPX-Strecke (.gpx) laden oder einfügen", size=14, weight=ft.FontWeight.BOLD),
-                                gpx_file_text
-                            ], col={"xs": 12, "md": 6}),
-                            ft.Row([
-                                ft.FilledButton(
-                                    "📁 GPX auswählen (.gpx)",
-                                    icon=ft.Icons.UPLOAD_FILE,
-                                    on_click=on_pick_gpx_click
-                                ),
-                                ft.OutlinedButton(
-                                    "📋 GPX einfügen",
-                                    icon=ft.Icons.PASTE,
-                                    on_click=open_paste_dialog
-                                )
-                            ], col={"xs": 12, "md": 6}, alignment=ft.MainAxisAlignment.END, wrap=True)
-                        ], vertical_alignment=ft.CrossAxisAlignment.CENTER),
-                        ft.Divider(height=10, color=ft.Colors.TRANSPARENT) if available_gpx else ft.Container(),
-                        ft.Row([gpx_dropdown]) if available_gpx else ft.Container(),
-                    ]),
-                    padding=16,
-                )
-            ),
+            hero_dashboard,
+            card1,
+            section2_header,
+            card2,
+            section3_header,
+            card3,
         ], spacing=16, scroll=ft.ScrollMode.AUTO, expand=True),
         padding=16,
         expand=True
@@ -904,25 +1265,65 @@ async def main(page: ft.Page):
     # ----------------------------------------------------
     tab_analysis_view = ft.Container(
         content=ft.Column([
-            ft.Text("📊 Übersicht & Key Performance Indicators", size=16, weight=ft.FontWeight.BOLD),
+            ft.Row([
+                ft.Container(
+                    content=ft.Icon(ft.Icons.BAR_CHART, size=16, color=ft.Colors.AMBER_400),
+                    bgcolor=ft.Colors.with_opacity(0.15, ft.Colors.AMBER),
+                    border_radius=8,
+                    padding=6,
+                ),
+                ft.Text("Übersicht & Leistungs-KPIs", size=15, weight=ft.FontWeight.BOLD, expand=True),
+            ], spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER),
             ft.ResponsiveRow([
-                make_kpi_card(ft.Icons.TIMER_OUTLINED, "Prognostizierte Fahrzeit", kpi_time),
-                make_kpi_card(ft.Icons.FITNESS_CENTER_OUTLINED, "Systemgewicht Gesamt", kpi_weight),
-                make_kpi_card(ft.Icons.BOLT_OUTLINED, "Relative FTP (W/kg)", kpi_rel_ftp),
-                make_kpi_card(ft.Icons.RESTAURANT_OUTLINED, "Gesamtbedarf KH", kpi_carbs),
-            ]),
+                make_kpi_card(ft.Icons.TIMER_OUTLINED, "Prognose Zeit", kpi_time, ft.Colors.AMBER_400),
+                make_kpi_card(ft.Icons.FITNESS_CENTER_OUTLINED, "Systemgewicht", kpi_weight, ft.Colors.BLUE_400),
+                make_kpi_card(ft.Icons.BOLT_OUTLINED, "Relative FTP", kpi_rel_ftp, ft.Colors.GREEN_400),
+                make_kpi_card(ft.Icons.RESTAURANT_OUTLINED, "Gesamt-KH", kpi_carbs, ft.Colors.PURPLE_400),
+            ], spacing=8, run_spacing=8),
 
-            ft.Text("🗺️ Strecken-Vorschau (Geografischer Verlauf)", size=16, weight=ft.FontWeight.BOLD),
-            ft.Card(content=ft.Container(content=img_map, padding=10)),
+            ft.Row([
+                ft.Container(
+                    content=ft.Icon(ft.Icons.MAP, size=16, color=ft.Colors.LIGHT_BLUE_400),
+                    bgcolor=ft.Colors.with_opacity(0.15, ft.Colors.LIGHT_BLUE),
+                    border_radius=8,
+                    padding=6,
+                ),
+                ft.Text("Strecken-Vorschau (Karte)", size=15, weight=ft.FontWeight.BOLD, expand=True),
+            ], spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+            ft.Card(content=ft.Container(content=img_map, padding=10), shape=ft.RoundedRectangleBorder(radius=16)),
 
-            ft.Text("📈 Höhenprofil & Segment-Leistung", size=16, weight=ft.FontWeight.BOLD),
-            ft.Card(content=ft.Container(content=img_elevation, padding=10)),
+            ft.Row([
+                ft.Container(
+                    content=ft.Icon(ft.Icons.SHOW_CHART, size=16, color=ft.Colors.AMBER_400),
+                    bgcolor=ft.Colors.with_opacity(0.15, ft.Colors.AMBER),
+                    border_radius=8,
+                    padding=6,
+                ),
+                ft.Text("Höhenprofil & Ziel-Leistung", size=15, weight=ft.FontWeight.BOLD, expand=True),
+            ], spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+            ft.Card(content=ft.Container(content=img_elevation, padding=10), shape=ft.RoundedRectangleBorder(radius=16)),
 
-            ft.Text("🔋 Energiespeicher & Ermüdungsverlauf (W' vs. Glykogen)", size=16, weight=ft.FontWeight.BOLD),
-            ft.Card(content=ft.Container(content=img_energy, padding=10)),
+            ft.Row([
+                ft.Container(
+                    content=ft.Icon(ft.Icons.BATTERY_CHARGING_FULL, size=16, color=ft.Colors.RED_400),
+                    bgcolor=ft.Colors.with_opacity(0.15, ft.Colors.RED),
+                    border_radius=8,
+                    padding=6,
+                ),
+                ft.Text("Energiespeicher (W' & Glykogen)", size=15, weight=ft.FontWeight.BOLD, expand=True),
+            ], spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+            ft.Card(content=ft.Container(content=img_energy, padding=10), shape=ft.RoundedRectangleBorder(radius=16)),
 
-            ft.Text("📋 Berechnete Intervall-Blöcke (Zonen-Farbcodierung)", size=16, weight=ft.FontWeight.BOLD),
-            ft.Card(content=ft.Container(content=intervals_column, padding=12)),
+            ft.Row([
+                ft.Container(
+                    content=ft.Icon(ft.Icons.FORMAT_LIST_BULLETED, size=16, color=ft.Colors.PURPLE_400),
+                    bgcolor=ft.Colors.with_opacity(0.15, ft.Colors.PURPLE),
+                    border_radius=8,
+                    padding=6,
+                ),
+                ft.Text("Workout-Segmente (Zonen)", size=15, weight=ft.FontWeight.BOLD, expand=True),
+            ], spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+            ft.Card(content=ft.Container(content=intervals_column, padding=12), shape=ft.RoundedRectangleBorder(radius=16)),
         ], spacing=16, scroll=ft.ScrollMode.AUTO, expand=True),
         padding=16,
         expand=True
@@ -979,7 +1380,6 @@ async def main(page: ft.Page):
         label="Karoo IP-Adresse", 
         hint_text="192.168.1.45", 
         prefix_icon=ft.Icons.ROUTER, 
-        expand=True,
         value=state.get("karoo_ip", ""),
         on_change=on_karoo_ip_change
     )
@@ -988,7 +1388,6 @@ async def main(page: ft.Page):
         hint_text="PRDUTX", 
         prefix_icon=ft.Icons.PIN, 
         max_length=10, 
-        width=150,
         value=state.get("karoo_token", ""),
         on_change=on_karoo_token_change
     )
@@ -1363,66 +1762,112 @@ async def main(page: ft.Page):
 
     tab_sync_view = ft.Container(
         content=ft.Column([
-            ft.Text("📱 Hammerhead Karoo Drahtlos-Übertragung (WLAN)", size=16, weight=ft.FontWeight.BOLD),
-            
-            ft.Card(
-                content=ft.Container(
-                    content=ft.Column([
-                        ft.Text("Methode 1: 6-Stelliger Code (Vom Karoo-Display)", size=14, weight=ft.FontWeight.BOLD),
-                        ft.Row([karoo_ip_input, karoo_token_input]),
-                        ft.FilledButton("🚀 Track mit Code an Karoo senden", icon=ft.Icons.SEND, on_click=on_send_code_click),
-                    ], spacing=12),
-                    padding=16
-                )
-            ),
+            ft.Row([
+                ft.Container(
+                    content=ft.Icon(ft.Icons.SEND_TO_MOBILE, size=16, color=ft.Colors.AMBER_400),
+                    bgcolor=ft.Colors.with_opacity(0.15, ft.Colors.AMBER),
+                    border_radius=8,
+                    padding=6,
+                ),
+                ft.Text("Hammerhead Karoo Live-Sync", size=15, weight=ft.FontWeight.BOLD),
+            ], spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER),
 
+            # Hero Card: QR-Code Live Scanner (Fastest mobile method)
             ft.Card(
                 content=ft.Container(
                     content=ft.Column([
-                        ft.Text("Methode 2: Live QR-Code Scanner (Kamera)", size=14, weight=ft.FontWeight.BOLD),
-                        ft.Text("Scanne den QR-Code auf deinem Karoo-Display direkt live mit deiner Webcam/Kamera:", size=12, color=ft.Colors.GREY_400),
+                        ft.Row([
+                            ft.Icon(ft.Icons.QR_CODE_SCANNER, size=20, color=ft.Colors.AMBER_400),
+                            ft.Text("Schneller Live-Scan (Kamera)", size=14, weight=ft.FontWeight.BOLD),
+                        ], spacing=8),
+                        ft.Text("Scanne den QR-Code auf deinem Karoo-Display direkt mit der Kamera für eine blitzschnelle Verbindung:", size=12, color=ft.Colors.GREY_400),
                         ft.Row([
                             ft.FilledButton(
-                                "📷 QR-Code mit Kamera scannen",
+                                "QR-Code mit Kamera scannen",
                                 icon=ft.Icons.CAMERA_ALT,
-                                on_click=open_qr_camera_scanner
+                                on_click=open_qr_camera_scanner,
+                                style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10)),
                             ),
                             ft.OutlinedButton(
-                                "📁 Bilddatei wählen",
+                                "QR-Bild wählen",
                                 icon=ft.Icons.IMAGE,
-                                on_click=on_pick_qr_image_file
+                                on_click=on_pick_qr_image_file,
+                                style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10)),
                             ),
-                        ], spacing=12, wrap=True),
+                        ], spacing=10, wrap=True),
                     ], spacing=12),
-                    padding=16
-                )
+                    padding=16,
+                    border_radius=16,
+                ),
+                shape=ft.RoundedRectangleBorder(radius=16),
             ),
 
+            # Secondary Card: Manual IP & Token Entry
             ft.Card(
                 content=ft.Container(
                     content=ft.Column([
-                        ft.Text("Methode 3: Direkte Karoo-WLAN-URL", size=14, weight=ft.FontWeight.BOLD),
+                        ft.Row([
+                            ft.Icon(ft.Icons.KEYBOARD, size=18, color=ft.Colors.BLUE_400),
+                            ft.Text("Manuelle Eingabe (Code / WLAN-IP)", size=14, weight=ft.FontWeight.BOLD),
+                        ], spacing=8),
+                        ft.ResponsiveRow([
+                            ft.Column([karoo_ip_input], col={"xs": 12, "sm": 7}),
+                            ft.Column([karoo_token_input], col={"xs": 12, "sm": 5}),
+                        ], spacing=8, run_spacing=8),
+                        ft.FilledTonalButton("Track mit Code an Karoo senden", icon=ft.Icons.SEND, on_click=on_send_code_click, style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10))),
+                        ft.Divider(height=6, color=ft.Colors.TRANSPARENT),
                         ft.Row([url_input]),
-                        ft.FilledButton("📡 Senden an URL", icon=ft.Icons.WIFI_TETHERING, on_click=on_send_url_click),
-                    ], spacing=12),
-                    padding=16
-                )
+                        ft.OutlinedButton("Senden an URL", icon=ft.Icons.WIFI_TETHERING, on_click=on_send_url_click, style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10))),
+                    ], spacing=10),
+                    padding=16,
+                    border_radius=16,
+                ),
+                shape=ft.RoundedRectangleBorder(radius=16),
             ),
 
-            ft.Text("📋 Übertragungs-Protokoll & Live-Log", size=16, weight=ft.FontWeight.BOLD),
-            log_box,
-
-            ft.Divider(height=15),
-            ft.Text("💾 Lokale Workout- & Dateiexporte", size=16, weight=ft.FontWeight.BOLD),
+            # Section: Export Files
+            ft.Row([
+                ft.Container(
+                    content=ft.Icon(ft.Icons.SAVE_ALT, size=16, color=ft.Colors.GREEN_400),
+                    bgcolor=ft.Colors.with_opacity(0.15, ft.Colors.GREEN),
+                    border_radius=8,
+                    padding=6,
+                ),
+                ft.Text("Lokale Workout- & Dateiexporte", size=15, weight=ft.FontWeight.BOLD),
+            ], spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER),
             ft.ResponsiveRow([
-                ft.FilledTonalButton("💾 Karoo JSON speichern", icon=ft.Icons.DOWNLOAD, col={"xs": 12, "sm": 4}, on_click=on_export_json_click),
-                ft.FilledTonalButton("🚴 Zwift (.zwo) speichern", icon=ft.Icons.DIRECTIONS_BIKE, col={"xs": 12, "sm": 4}, on_click=on_export_zwift_click),
-                ft.FilledTonalButton("⌚ Garmin (.fit) speichern", icon=ft.Icons.WATCH, col={"xs": 12, "sm": 4}, on_click=on_export_garmin_click),
-            ]),
+                ft.FilledTonalButton("💾 Karoo JSON", icon=ft.Icons.DOWNLOAD, col={"xs": 12, "sm": 4}, on_click=on_export_json_click),
+                ft.FilledTonalButton("🚴 Zwift (.zwo)", icon=ft.Icons.DIRECTIONS_BIKE, col={"xs": 12, "sm": 4}, on_click=on_export_zwift_click),
+                ft.FilledTonalButton("⌚ Garmin (.fit)", icon=ft.Icons.WATCH, col={"xs": 12, "sm": 4}, on_click=on_export_garmin_click),
+            ], spacing=8, run_spacing=8),
+
+            # Section: Protocol & Live-Log
+            ft.Row([
+                ft.Container(
+                    content=ft.Icon(ft.Icons.RECEIPT_LONG, size=16, color=ft.Colors.PURPLE_400),
+                    bgcolor=ft.Colors.with_opacity(0.15, ft.Colors.PURPLE),
+                    border_radius=8,
+                    padding=6,
+                ),
+                ft.Text("Übertragungs-Protokoll & Status", size=15, weight=ft.FontWeight.BOLD),
+            ], spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+            ft.Card(
+                content=ft.Container(content=log_box, padding=12, border_radius=16),
+                shape=ft.RoundedRectangleBorder(radius=16),
+            ),
 
             ft.Container(
                 content=ft.OutlinedButton("🔌 Entwickler: Lokaler ADB Push (USB-Kabel)", icon=ft.Icons.USB, on_click=on_adb_push_click),
-                margin=ft.Margin.only(top=10)
+                margin=ft.Margin.only(top=4, bottom=4)
+            ),
+
+            ft.Container(
+                content=ft.Column([
+                    ft.Text(f"Build {BUILD_NUMBER} · v{APP_VERSION}", size=11, color=ft.Colors.GREY_500, text_align=ft.TextAlign.CENTER),
+                    ft.Text(f"{BUILD_TIMESTAMP}", size=10, color=ft.Colors.GREY_500, text_align=ft.TextAlign.CENTER),
+                ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=2),
+                alignment=ft.Alignment(0, 0),
+                margin=ft.Margin.only(top=6, bottom=24),
             )
         ], spacing=16, scroll=ft.ScrollMode.AUTO, expand=True),
         padding=16,
@@ -1460,14 +1905,33 @@ async def main(page: ft.Page):
         on_click=toggle_theme
     )
 
-    route_status_chip = ft.Chip(
-        label=ft.Text(format_chip_route(state['gpx_path']), size=11),
+    route_status_chip_text = ft.Text(format_chip_route(state['gpx_path']), size=11, weight=ft.FontWeight.W_600)
+    route_status_chip = ft.Container(
+        content=ft.Row([
+            ft.Icon(ft.Icons.LOCATION_ON, size=13, color=ft.Colors.AMBER_400),
+            route_status_chip_text,
+        ], spacing=3, alignment=ft.MainAxisAlignment.CENTER),
+        padding=ft.Padding.symmetric(horizontal=8, vertical=4),
+        border_radius=12,
+        bgcolor=ft.Colors.with_opacity(0.12, ft.Colors.AMBER),
+        border=ft.Border.all(1, ft.Colors.with_opacity(0.28, ft.Colors.AMBER)),
         tooltip=os.path.basename(state['gpx_path']),
-        bgcolor=ft.Colors.with_opacity(0.15, ft.Colors.AMBER)
     )
 
+    initial_tab = int(os.environ.get("POWER_PLANNER_TAB", "0"))
+    if initial_tab == 1:
+        img_elevation.src = render_elevation_chart()
+        img_energy.src = render_energy_chart()
+        intervals_column.controls = [build_intervals_table()]
+        state["charts_dirty"] = False
+        current_view_container.content = tab_analysis_view
+    elif initial_tab == 2:
+        current_view_container.content = tab_sync_view
+    else:
+        current_view_container.content = tab_setup_view
+
     nav_bar = ft.NavigationBar(
-        selected_index=0,
+        selected_index=initial_tab,
         destinations=[
             ft.NavigationBarDestination(icon=ft.Icons.TUNE_OUTLINED, selected_icon=ft.Icons.TUNE, label="Setup & Route"),
             ft.NavigationBarDestination(icon=ft.Icons.BAR_CHART_OUTLINED, selected_icon=ft.Icons.BAR_CHART, label="Analyse & Charts"),
@@ -1477,12 +1941,12 @@ async def main(page: ft.Page):
     )
 
     app_bar = ft.AppBar(
-        leading=ft.Icon(ft.Icons.DIRECTIONS_BIKE, color=ft.Colors.AMBER_400, size=28),
+        leading=ft.Icon(ft.Icons.DIRECTIONS_BIKE, color=ft.Colors.AMBER_400, size=26),
         leading_width=36,
         title=ft.Column([
-            ft.Text("Power-Planner", size=17, weight=ft.FontWeight.BOLD, no_wrap=True),
-            ft.Text("Pacing & Nutrition", size=11, color=ft.Colors.GREY_400, no_wrap=True),
-        ], spacing=1),
+            ft.Text("Power-Planner", size=18, weight=ft.FontWeight.BOLD, no_wrap=True),
+            ft.Text("Pacing & Strategy", size=11, color=ft.Colors.GREY_400, no_wrap=True),
+        ], spacing=0),
         actions=[
             route_status_chip,
             theme_btn,
