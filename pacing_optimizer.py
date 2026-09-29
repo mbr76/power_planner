@@ -2,6 +2,11 @@ import os
 import io
 import math
 import json
+import time
+import hashlib
+import tempfile
+import urllib.request
+import urllib.error
 from datetime import datetime, timezone
 import numpy as np
 import pandas as pd
@@ -10,6 +15,44 @@ try:
     import gpxpy
 except ImportError:
     gpxpy = None
+
+class ElevationFetchError(Exception):
+    """Fehler beim Abrufen von Höhendaten über eine externe API."""
+    pass
+
+
+def _get_elevation_cache_dir():
+    cache_dir = os.path.expanduser("~/.cache/pacing_optimizer/elevation")
+    try:
+        os.makedirs(cache_dir, exist_ok=True)
+        return cache_dir
+    except Exception:
+        fallback = os.path.join(tempfile.gettempdir(), "pacing_elevation_cache")
+        os.makedirs(fallback, exist_ok=True)
+        return fallback
+
+
+def _compute_route_hash(df):
+    hasher = hashlib.sha256()
+    summary = f"{len(df)}:{df['distance_km'].iloc[-1]:.3f}:"
+    hasher.update(summary.encode('utf-8'))
+    for lat, lon in zip(df['latitude'], df['longitude']):
+        hasher.update(f"{lat:.5f},{lon:.5f};".encode('ascii'))
+    return hasher.hexdigest()[:24]
+
+
+def _apply_elevation_and_slope(df):
+    if len(df) >= 5:
+        smoothed_ele = df['elevation'].rolling(window=5, min_periods=1, center=True).mean()
+    else:
+        smoothed_ele = df['elevation']
+
+    ele_diff = smoothed_ele.diff().fillna(0.0)
+    seg_len = df['segment_len_m'].replace(0.0, 1.0)
+    df['slope'] = (ele_diff / seg_len) * 100.0
+    if len(df) >= 15:
+        df['slope'] = df['slope'].rolling(window=15, min_periods=1, center=True).mean()
+
 
 class AdvancedPacingOptimizer:
     def __init__(self, initial_ftp=300, w_prime_max=20000, target_factor=0.82, 
@@ -29,6 +72,8 @@ class AdvancedPacingOptimizer:
         self.rho = 1.2
         self.loss_dt = 0.03
         self.initial_glycogen_kcal = initial_glycogen_kcal
+        self.elevation_source = "gpx"
+        self.elevation_error = None
 
     def _solve_velocity(self, target_watt, slope_pct):
         s = slope_pct / 100.0
@@ -50,7 +95,214 @@ class AdvancedPacingOptimizer:
                 
         return (low + high) / 2.0
 
-    def parse_gpx(self, gpx_source):
+    def enrich_elevation_from_api(self, df, progress_callback=None, timeout_per_request=8.0, total_timeout=40.0):
+        """
+        Ruft Höhendaten für die Koordinaten im DataFrame über Open-Meteo oder Open-Elevation ab.
+        - Prüft zuerst den lokalen Festplatten-Cache.
+        - Bis 450 Punkte: Open-Meteo in kleinen 90er-Batches mit Pacing (schnell, unter 600/min).
+        - Ab 450 Punkte oder bei HTTP 429/403: Automatischer Fallback auf Open-Elevation per POST.
+        - Meldet Zwischenstände über progress_callback(fraction, message).
+        
+        Bei Fehlern oder Timeouts wird ElevationFetchError ausgelöst.
+        """
+        if df.empty or 'latitude' not in df.columns or 'longitude' not in df.columns:
+            return df
+
+        # 1. Prüfen, ob für diese Route bereits ein lokaler Disk-Cache existiert
+        cache_key = _compute_route_hash(df)
+        cache_file = os.path.join(_get_elevation_cache_dir(), f"{cache_key}.json")
+        if os.path.exists(cache_file):
+            try:
+                with open(cache_file, "r", encoding="utf-8") as f:
+                    cached_data = json.load(f)
+                cached_elevations = cached_data.get("elevations")
+                if cached_elevations and len(cached_elevations) == len(df):
+                    df['elevation'] = np.array(cached_elevations, dtype=float)
+                    _apply_elevation_and_slope(df)
+                    self.elevation_source = "cache"
+                    self.elevation_error = None
+                    return df
+            except Exception:
+                pass  # Bei beschädigtem Cache frisch anfragen
+
+        total_dist_m = float(df['distance_km'].iloc[-1] * 1000.0) if not df.empty else 0.0
+        
+        # 2. Raster-Berechnung:
+        # Strecken bis 100 km: ca. 400-450 Stützpunkte (passt perfekt ins Open-Meteo 600er-Minutenkontingent)
+        # Strecken über 100 km: 75-100m Raster (max. 1500 Punkte, ideal für Open-Elevation POST)
+        if total_dist_m <= 100000.0:
+            min_spacing_m = max(50.0, total_dist_m / 450.0)
+        else:
+            min_spacing_m = max(75.0, total_dist_m / 1500.0)
+
+        selected_indices = [0]
+        last_dist_m = 0.0
+        for idx in range(1, len(df)):
+            dist_m = df['distance_km'].iloc[idx] * 1000.0
+            if dist_m - last_dist_m >= min_spacing_m:
+                selected_indices.append(idx)
+                last_dist_m = dist_m
+
+        if selected_indices[-1] != len(df) - 1:
+            selected_indices.append(len(df) - 1)
+
+        sample_df = df.iloc[selected_indices]
+        coords_lat = sample_df['latitude'].tolist()
+        coords_lon = sample_df['longitude'].tolist()
+        n_sample = len(sample_df)
+
+        def _fetch_open_meteo(lats, lons):
+            chunk_size = 90  # 90 Punkte pro URL
+            chunks = [
+                (lats[i:i + chunk_size], lons[i:i + chunk_size])
+                for i in range(0, len(lats), chunk_size)
+            ]
+            elevs = []
+            for i, (ch_lats, ch_lons) in enumerate(chunks):
+                if progress_callback:
+                    pct = (i / len(chunks)) * 0.95
+                    progress_callback(pct, f"Abruf via Open-Meteo ({int(pct * 100)} %)...")
+                if i > 0:
+                    time.sleep(0.06)
+
+                lat_str = ",".join(f"{lat:.5f}" for lat in ch_lats)
+                lon_str = ",".join(f"{lon:.5f}" for lon in ch_lons)
+                url = f"https://api.open-meteo.com/v1/elevation?latitude={lat_str}&longitude={lon_str}"
+                req = urllib.request.Request(url, headers={"User-Agent": "PacingOptimizer/1.0"})
+                
+                with urllib.request.urlopen(req, timeout=timeout_per_request) as resp:
+                    status_code = getattr(resp, "status", getattr(resp, "code", 200))
+                    if status_code != 200:
+                        raise ElevationFetchError(f"Open-Meteo meldete Status {status_code}")
+                    payload = json.loads(resp.read().decode("utf-8"))
+                    if "elevation" not in payload:
+                        raise ElevationFetchError("Kein 'elevation'-Feld in Open-Meteo Antwort")
+                    elevs.extend(payload["elevation"])
+            return elevs
+
+        def _fetch_open_elevation(lats, lons):
+            chunk_size = 500  # 500 Punkte pro POST
+            chunks = [
+                (lats[i:i + chunk_size], lons[i:i + chunk_size])
+                for i in range(0, len(lats), chunk_size)
+            ]
+            elevs = []
+            for i, (ch_lats, ch_lons) in enumerate(chunks):
+                if progress_callback:
+                    pct = (i / len(chunks)) * 0.95
+                    progress_callback(pct, f"Abruf via Open-Elevation POST ({int(pct * 100)} %)...")
+                if i > 0:
+                    time.sleep(0.1)
+
+                url = "https://api.open-elevation.com/api/v1/lookup"
+                locations = [{"latitude": round(lat, 5), "longitude": round(lon, 5)} for lat, lon in zip(ch_lats, ch_lons)]
+                payload_bytes = json.dumps({"locations": locations}).encode("utf-8")
+                req = urllib.request.Request(
+                    url,
+                    data=payload_bytes,
+                    headers={
+                        "Content-Type": "application/json",
+                        "Accept": "application/json",
+                        "User-Agent": "PacingOptimizer/1.0"
+                    }
+                )
+                with urllib.request.urlopen(req, timeout=timeout_per_request + 4.0) as resp:
+                    status_code = getattr(resp, "status", getattr(resp, "code", 200))
+                    if status_code != 200:
+                        raise ElevationFetchError(f"Open-Elevation meldete Status {status_code}")
+                    payload = json.loads(resp.read().decode("utf-8"))
+                    results = payload.get("results", [])
+                    if not results:
+                        raise ElevationFetchError("Keine Ergebnisse von Open-Elevation")
+                    elevs.extend([float(r.get("elevation") or 0.0) for r in results])
+            return elevs
+
+        fetched_elevations = None
+        used_provider = "open-meteo"
+
+        # 3. Provider-Strategie:
+        # Wenn <= 450 Punkte: Open-Meteo zuerst. Bei 429/403 -> Fallback auf Open-Elevation.
+        # Wenn > 450 Punkte: Open-Elevation zuerst. Bei Fehler -> Fallback auf Open-Meteo mit 450 Pkt.
+        if n_sample <= 450:
+            try:
+                fetched_elevations = _fetch_open_meteo(coords_lat, coords_lon)
+                used_provider = "open-meteo"
+            except Exception as e_meteo:
+                if progress_callback:
+                    progress_callback(0.2, "Open-Meteo Rate-Limit erreicht. Schwenke auf Open-Elevation um...")
+                try:
+                    fetched_elevations = _fetch_open_elevation(coords_lat, coords_lon)
+                    used_provider = "open-elevation"
+                except Exception as e_elev:
+                    err_msg = f"Höhendaten konnten weder über Open-Meteo ({e_meteo}) noch Open-Elevation ({e_elev}) bezogen werden."
+                    self.elevation_source = "none"
+                    self.elevation_error = err_msg
+                    raise ElevationFetchError(err_msg)
+        else:
+            try:
+                fetched_elevations = _fetch_open_elevation(coords_lat, coords_lon)
+                used_provider = "open-elevation"
+            except Exception as e_elev:
+                if progress_callback:
+                    progress_callback(0.2, "Open-Elevation nicht verfügbar. Schwenke auf Open-Meteo (450 Pkt) um...")
+                try:
+                    # Fallback auf 450 Punkte für Open-Meteo
+                    step = math.ceil(n_sample / 450)
+                    sub_indices = list(range(0, n_sample, step))
+                    if sub_indices[-1] != n_sample - 1:
+                        sub_indices.append(n_sample - 1)
+                    sub_lats = [coords_lat[idx] for idx in sub_indices]
+                    sub_lons = [coords_lon[idx] for idx in sub_indices]
+                    sub_elevs = _fetch_open_meteo(sub_lats, sub_lons)
+                    
+                    # Auf n_sample rückinterpolieren
+                    sub_dists = [sample_df['distance_km'].iloc[idx] for idx in sub_indices]
+                    fetched_elevations = list(np.interp(sample_df['distance_km'].values, sub_dists, sub_elevs))
+                    used_provider = "open-meteo"
+                except Exception as e_meteo:
+                    err_msg = f"Höhendaten konnten weder über Open-Elevation ({e_elev}) noch Open-Meteo ({e_meteo}) bezogen werden."
+                    self.elevation_source = "none"
+                    self.elevation_error = err_msg
+                    raise ElevationFetchError(err_msg)
+
+        if not fetched_elevations or len(fetched_elevations) != len(sample_df):
+            err_msg = "Die Höhendaten konnten nicht bezogen werden: Unvollständige API-Antwort."
+            self.elevation_source = "none"
+            self.elevation_error = err_msg
+            raise ElevationFetchError(err_msg)
+
+        if progress_callback:
+            progress_callback(0.98, "Interpoliere Höhendaten und berechne Steigungsprofil...")
+
+        # 4. Auf alle Punkte des Original-DataFrames interpolieren
+        sample_dists = sample_df['distance_km'].values
+        all_dists = df['distance_km'].values
+        final_elevations = np.interp(all_dists, sample_dists, fetched_elevations)
+
+        df['elevation'] = np.round(final_elevations, 1)
+        _apply_elevation_and_slope(df)
+
+        # 5. Im lokalen Disk-Cache sichern
+        try:
+            with open(cache_file, "w", encoding="utf-8") as f:
+                json.dump({
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "provider": used_provider,
+                    "points": len(df),
+                    "distance_km": float(df['distance_km'].iloc[-1]),
+                    "elevations": df['elevation'].round(1).tolist()
+                }, f)
+        except Exception:
+            pass
+
+        if progress_callback:
+            progress_callback(1.0, "Fertig!")
+
+        self.elevation_source = used_provider
+        self.elevation_error = None
+        return df
+
+    def parse_gpx(self, gpx_source, auto_fetch_elevation=True, elevation_timeout=40.0, progress_callback=None):
         if gpxpy is None:
             return self._generate_synthetic_oetztaler()
 
@@ -59,11 +311,22 @@ class AdvancedPacingOptimizer:
                 gpx = gpxpy.parse(io.BytesIO(gpx_source))
             elif isinstance(gpx_source, str) and ("<gpx" in gpx_source or "<?xml" in gpx_source):
                 gpx = gpxpy.parse(io.StringIO(gpx_source))
-            elif isinstance(gpx_source, str) and os.path.exists(gpx_source):
-                with open(gpx_source, 'r', encoding='utf-8') as f:
-                    gpx = gpxpy.parse(f)
-            else:
-                return self._generate_synthetic_oetztaler()
+            elif isinstance(gpx_source, str):
+                resolved = gpx_source
+                if not os.path.exists(resolved):
+                    script_dir = os.path.dirname(os.path.abspath(__file__))
+                    cand = os.path.join(script_dir, gpx_source)
+                    if os.path.exists(cand):
+                        resolved = cand
+                    else:
+                        cand_base = os.path.join(script_dir, os.path.basename(gpx_source))
+                        if os.path.exists(cand_base):
+                            resolved = cand_base
+                if os.path.exists(resolved):
+                    with open(resolved, 'r', encoding='utf-8') as f:
+                        gpx = gpxpy.parse(f)
+                else:
+                    return self._generate_synthetic_oetztaler()
         except Exception:
             return self._generate_synthetic_oetztaler()
             
@@ -71,38 +334,67 @@ class AdvancedPacingOptimizer:
         cumulative_dist = 0.0
         prev_point = None
         
+        segments_to_process = []
         for track in gpx.tracks:
-            for segment in track.segments:
-                for point in segment.points:
-                    if prev_point is None:
-                        prev_point = point
-                        continue
-                        
-                    d_lat = math.radians(point.latitude - prev_point.latitude)
-                    d_lon = math.radians(point.longitude - prev_point.longitude)
-                    a = (math.sin(d_lat / 2) ** 2 + math.cos(math.radians(prev_point.latitude)) * 
-                         math.cos(math.radians(point.latitude)) * math.sin(d_lon / 2) ** 2)
-                    dist_m = 6371000 * (2 * math.atan2(math.sqrt(a), math.sqrt(1 - a)))
-                    
-                    if dist_m <= 0: continue
-                    cumulative_dist += (dist_m / 1000.0)
-                    
-                    ele_diff = (point.elevation or 0.0) - (prev_point.elevation or 0.0)
-                    slope = (ele_diff / dist_m) * 100
-                    
-                    points_data.append({
-                        'distance_km': cumulative_dist,
-                        'segment_len_m': dist_m,
-                        'slope': slope,
-                        'latitude': point.latitude,
-                        'longitude': point.longitude,
-                        'elevation': point.elevation or 0.0
-                    })
+            segments_to_process.extend(track.segments)
+        if not segments_to_process and hasattr(gpx, 'routes'):
+            for route in gpx.routes:
+                segments_to_process.append(route)
+
+        for segment in segments_to_process:
+            for point in segment.points:
+                if prev_point is None:
                     prev_point = point
+                    continue
                     
+                d_lat = math.radians(point.latitude - prev_point.latitude)
+                d_lon = math.radians(point.longitude - prev_point.longitude)
+                a = (math.sin(d_lat / 2) ** 2 + math.cos(math.radians(prev_point.latitude)) * 
+                     math.cos(math.radians(point.latitude)) * math.sin(d_lon / 2) ** 2)
+                dist_m = 6371000 * (2 * math.atan2(math.sqrt(a), math.sqrt(1 - a)))
+                
+                if dist_m <= 0: continue
+                cumulative_dist += (dist_m / 1000.0)
+                
+                ele_diff = (point.elevation or 0.0) - (prev_point.elevation or 0.0)
+                slope = (ele_diff / dist_m) * 100
+                
+                points_data.append({
+                    'distance_km': cumulative_dist,
+                    'segment_len_m': dist_m,
+                    'slope': slope,
+                    'latitude': point.latitude,
+                    'longitude': point.longitude,
+                    'elevation': point.elevation or 0.0
+                })
+                prev_point = point
+                
         df = pd.DataFrame(points_data)
         if not df.empty:
             df['slope'] = df['slope'].rolling(window=15, min_periods=1, center=True).mean()
+
+        # Automatische Erkennung und Ergänzung fehlender Höhendaten
+        has_valid_elevation = False
+        if not df.empty and 'elevation' in df.columns:
+            non_zero = (df['elevation'] != 0.0) & df['elevation'].notna()
+            # Valide, wenn Werte ungleich 0 existieren und Varianz vorhanden ist (nicht flach auf 0.0)
+            if non_zero.any() and (df['elevation'].max() - df['elevation'].min() > 0.001):
+                has_valid_elevation = True
+
+        if not df.empty and not has_valid_elevation:
+            if auto_fetch_elevation:
+                try:
+                    self.enrich_elevation_from_api(df, progress_callback=progress_callback, total_timeout=elevation_timeout)
+                except ElevationFetchError:
+                    # df bleibt mit 0 Hm erhalten, Fehlerstatus ist in self.elevation_error hinterlegt
+                    pass
+            else:
+                self.elevation_source = "none"
+                self.elevation_error = "Die GPX-Datei enthält keine Höhendaten."
+        elif not df.empty and has_valid_elevation:
+            self.elevation_source = "gpx"
+            self.elevation_error = None
+
         return df
 
     def _get_zone_color(self, target_watt):

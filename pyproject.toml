@@ -52,3 +52,7 @@ dependencies = [
 
 [tool.flet.ios.info]
 NSCameraUsageDescription = "Kamerazugriff wird benötigt, um den QR-Code vom Karoo Fahrradcomputer zu scannen."
+
+[tool.flet.android]
+extract_packages = ["matplotlib"]
+

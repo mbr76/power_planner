@@ -45,8 +45,8 @@ except ImportError:
 
 # App Version & Build Metadata
 APP_VERSION = "1.0.0"
-BUILD_NUMBER = "24"
-BUILD_TIMESTAMP = "2026-09-21T09:35:00+02:00"
+BUILD_NUMBER = "29"
+BUILD_TIMESTAMP = "2026-09-29 13:37:22"
 
 
 # ==========================================
@@ -353,8 +353,19 @@ def decode_qr_image(file_path_or_bytes):
 def resolve_path(p):
     if not isinstance(p, str):
         return p
+    if os.path.isabs(p) and os.path.exists(p):
+        return p
     if os.path.exists(p):
         return p
+    
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    candidate = os.path.join(script_dir, p)
+    if os.path.exists(candidate):
+        return candidate
+    candidate_base = os.path.join(script_dir, os.path.basename(p))
+    if os.path.exists(candidate_base):
+        return candidate_base
+
     if hasattr(sys, '_MEIPASS'):
         bundled = os.path.join(sys._MEIPASS, p)
         if os.path.exists(bundled):
@@ -368,11 +379,14 @@ def resolve_path(p):
 def get_available_gpx_files():
     files = []
     search_dirs = ["."]
-    if hasattr(sys, '_MEIPASS'):
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    if script_dir not in search_dirs and os.path.exists(script_dir):
+        search_dirs.append(script_dir)
+    if hasattr(sys, '_MEIPASS') and sys._MEIPASS not in search_dirs:
         search_dirs.append(sys._MEIPASS)
     for base_dir in search_dirs:
         for root, dirs, filenames in os.walk(base_dir):
-            dirs[:] = [d for d in dirs if not d.startswith(".") and d != "pacing-env" and d != "__pycache__"]
+            dirs[:] = [d for d in dirs if not d.startswith(".") and d != "pacing-env" and d != "__pycache__" and d != "build"]
             for f in filenames:
                 if f.lower().endswith(".gpx"):
                     name = os.path.basename(f)
@@ -433,6 +447,43 @@ async def main(page: ft.Page):
     # ----------------------------------------------------
     # Calculation & Chart Rendering Engine (Ultra-Fast)
     # ----------------------------------------------------
+    elevation_progress_bar = ft.ProgressBar(width=340, value=0.0, color=ft.Colors.TEAL_400, bgcolor=ft.Colors.GREY_800)
+    elevation_progress_text = ft.Text("Verbindung zur Höhen-API...", size=12, color=ft.Colors.GREY_300)
+    elevation_dialog = ft.AlertDialog(
+        modal=True,
+        title=ft.Row([
+            ft.Icon(ft.Icons.TERRAIN, color=ft.Colors.TEAL_400, size=24),
+            ft.Text("Höhendaten werden ermittelt", size=16, weight=ft.FontWeight.BOLD)
+        ], spacing=10),
+        content=ft.Container(
+            content=ft.Column([
+                ft.Text("Die Strecke enthält keine Höhendaten. Die Geländehöhen werden automatisch abgerufen:", size=13, color=ft.Colors.GREY_400),
+                ft.Container(height=6),
+                elevation_progress_text,
+                ft.Container(height=4),
+                elevation_progress_bar,
+            ], spacing=6, tight=True),
+            width=380,
+            padding=10
+        )
+    )
+
+    state["is_elevation_dialog_open"] = False
+
+    def on_elevation_progress(fraction: float, message: str):
+        if not state.get("is_elevation_dialog_open", False):
+            state["is_elevation_dialog_open"] = True
+            page.show_dialog(elevation_dialog)
+        elevation_progress_bar.value = max(0.0, min(1.0, fraction))
+        elevation_progress_text.value = message
+        page.update()
+
+    def close_elevation_dialog():
+        if state.get("is_elevation_dialog_open", False):
+            page.pop_dialog()
+            state["is_elevation_dialog_open"] = False
+            page.update()
+
     def run_calculation():
         try:
             optimizer = AdvancedPacingOptimizer(
@@ -445,7 +496,12 @@ async def main(page: ft.Page):
             )
             if state["df_route"] is None:
                 source = state.get("gpx_content") or resolve_path(state["gpx_path"])
-                state["df_route"] = optimizer.parse_gpx(source)
+                try:
+                    state["df_route"] = optimizer.parse_gpx(source, progress_callback=on_elevation_progress)
+                finally:
+                    close_elevation_dialog()
+                state["elevation_source"] = getattr(optimizer, "elevation_source", "gpx")
+                state["elevation_error"] = getattr(optimizer, "elevation_error", None)
             df_route = state["df_route"]
             df_raw = optimizer.generate_raw_pacing_dataframe(df_route)
             df_intervals = optimizer._segment_intervals(df_raw)
@@ -855,8 +911,29 @@ async def main(page: ft.Page):
 
             route_dist_badge.value = f"{calc['total_km']:.1f} km"
             route_ele_badge.value = f"{int(calc['pos_ele'])} hm"
+            if state.get("elevation_source") == "open-meteo":
+                route_ele_badge.tooltip = f"{int(calc['pos_ele'])} Hm (via Open-Meteo API bezogen)"
+            elif state.get("elevation_source") == "open-elevation":
+                route_ele_badge.tooltip = f"{int(calc['pos_ele'])} Hm (via Open-Elevation API bezogen)"
+            elif state.get("elevation_source") == "cache":
+                route_ele_badge.tooltip = f"{int(calc['pos_ele'])} Hm (aus lokalem Höhendaten-Cache)"
+            elif state.get("elevation_error"):
+                route_ele_badge.tooltip = f"0 Hm (Fehler: {state['elevation_error']})"
+            else:
+                route_ele_badge.tooltip = f"{int(calc['pos_ele'])} Hm (aus GPX-Datei)"
+
             route_name_badge.value = os.path.basename(state['gpx_path'])
             
+            if route_changed:
+                if state.get("elevation_error"):
+                    show_snack(f"⚠️ {state['elevation_error']}", bgcolor=ft.Colors.RED_800, icon=ft.Icons.ERROR_OUTLINE)
+                elif state.get("elevation_source") == "open-meteo":
+                    show_snack(f"⛰️ Höhendaten wurden via Open-Meteo bezogen ({int(calc['pos_ele'])} Hm ermittelt).", bgcolor=ft.Colors.TEAL_700, icon=ft.Icons.TERRAIN)
+                elif state.get("elevation_source") == "open-elevation":
+                    show_snack(f"⛰️ Höhendaten wurden via Open-Elevation bezogen ({int(calc['pos_ele'])} Hm ermittelt).", bgcolor=ft.Colors.TEAL_700, icon=ft.Icons.TERRAIN)
+                elif state.get("elevation_source") == "cache":
+                    show_snack(f"⚡ Höhendaten aus lokalem Cache geladen ({int(calc['pos_ele'])} Hm).", bgcolor=ft.Colors.TEAL_800, icon=ft.Icons.SAVED_SEARCH)
+
             if route_changed or state.get("map_bytes") is None:
                 state["map_bytes"] = render_route_map()
                 img_map.src = state["map_bytes"]

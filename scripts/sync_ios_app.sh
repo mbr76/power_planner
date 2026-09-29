@@ -6,12 +6,17 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 echo "🔄 [PowerPlanner iOS Sync] Starte Synchronisation von Python -> iOS..."
 
-# 1. Dynamische Build-Nummer aus Git-Commits
+# 1. Dynamische Build-Nummer aus Git-Commits und aktueller Timestamp
 BUILD_NUM=$(git -C "$PROJECT_ROOT" rev-list --count HEAD 2>/dev/null || echo "1")
+BUILD_TIME=$(date "+%Y-%m-%d %H:%M:%S")
+
+sed -i '' "s/^BUILD_NUMBER = .*/BUILD_NUMBER = \"$BUILD_NUM\"/" "$PROJECT_ROOT/power_planner_flet.py"
+sed -i '' "s/^BUILD_TIMESTAMP = .*/BUILD_TIMESTAMP = \"$BUILD_TIME\"/" "$PROJECT_ROOT/power_planner_flet.py"
+
 CONFIG="$PROJECT_ROOT/build/flutter/ios/Flutter/Generated.xcconfig"
 if [ -f "$CONFIG" ]; then
     sed -i '' "s/FLUTTER_BUILD_NUMBER=.*/FLUTTER_BUILD_NUMBER=$BUILD_NUM/" "$CONFIG"
-    echo "📌 Build-Nummer gesetzt auf: $BUILD_NUM"
+    echo "📌 Build-Nummer gesetzt auf: $BUILD_NUM ($BUILD_TIME)"
 fi
 
 # 2. Zielverzeichnisse
