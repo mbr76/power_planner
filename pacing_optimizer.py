@@ -57,8 +57,8 @@ def _apply_elevation_and_slope(df):
 class AdvancedPacingOptimizer:
     def __init__(self, initial_ftp=300, w_prime_max=20000, target_factor=0.82, 
                  min_duration_sec=300, carb_intake_per_hour=90,
-                 rider_weight=75.0, bike_weight=8.5, cda=0.32,
-                 initial_glycogen_kcal=2000.0):
+                 rider_weight=75.0, bike_weight=8.5, cda=0.35, crr=0.005,
+                 initial_glycogen_kcal=2000.0, max_descent_kmh=56.0):
         self.initial_ftp = initial_ftp
         self.w_prime_max = w_prime_max
         self.target_factor = target_factor
@@ -68,10 +68,11 @@ class AdvancedPacingOptimizer:
         self.bike_weight = bike_weight
         self.total_mass = rider_weight + bike_weight
         self.cda = cda
-        self.crr = 0.004
+        self.crr = crr
         self.rho = 1.2
         self.loss_dt = 0.03
         self.initial_glycogen_kcal = initial_glycogen_kcal
+        self.max_descent_kmh = max_descent_kmh
         self.elevation_source = "gpx"
         self.elevation_error = None
 
@@ -82,9 +83,10 @@ class AdvancedPacingOptimizer:
         p_wheel = max(target_watt * (1.0 - self.loss_dt), 0.0)
         # Konstante Kräfte (Hangabtrieb + Rollwiderstand)
         f_constant = (self.total_mass * g * s) + (self.total_mass * g * self.crr)
-        # Bisektion-Suchbereich: Zwischen 1.53 m/s (5.5 km/h) und 22.2 m/s (80 km/h)
-        low, high = 1.53, 22.2
-        for _ in range(14):
+        # Bisektion-Suchbereich: Zwischen 1.50 m/s (5.4 km/h) und maximaler technischer Abfahrtsgeschwindigkeit
+        v_max_mps = self.max_descent_kmh / 3.6
+        low, high = 1.50, v_max_mps
+        for _ in range(16):
             mid = (low + high) / 2.0
             # Physikalische Leistungsgleichung: P = F_luft * v + F_konstant * v
             p_calc = (0.5 * self.cda * self.rho * (mid**3)) + (f_constant * mid)
@@ -421,28 +423,75 @@ class AdvancedPacingOptimizer:
         cumulative_time_sec = 0.0
         last_nutrition_time_sec = 0.0
         nutrition_interval_sec = 1200.0  # Alle 20 Minuten
+        g = 9.81
         
         for idx, row in df_route.iterrows():
             slope = row['slope']
             dist_m = row['segment_len_m']
+            s = slope / 100.0
             
             tank_emptiness_pct = 1.0 - (internal_glycogen_kcal / self.initial_glycogen_kcal) if self.initial_glycogen_kcal > 0 else 1.0
-            current_ftp = self.initial_ftp * (1.0 - (0.25 * (tank_emptiness_pct ** 2)))
-            power_factor = self.target_factor * (1.0 + 0.045 * slope)
+            # Realistische physiologische Ermüdung bei fortschreitender Glykogenentleerung (max. 10% Abfall)
+            current_ftp = self.initial_ftp * (1.0 - (0.10 * (tank_emptiness_pct ** 2)))
             
-            w_prime_pct = w_prime_current / self.w_prime_max
-            max_allowed = 1.30 if w_prime_pct > 0.20 else 1.00
-            power_factor = min(max(power_factor, 0.55), max_allowed)
-            target_watt = int(round((power_factor * current_ftp) / 5) * 5)
+            # 1. Neigungsabhängiges Pacing:
+            if slope < -5.0:
+                # Steile Abfahrten: Rollen lassen / aktive Erholung
+                base_factor = 0.0
+            elif slope < -1.5:
+                # Leichte Gefälle: Sanftes Mittreten
+                ratio = (slope - (-5.0)) / 3.5
+                base_factor = ratio * (self.target_factor * 0.45)
+            elif slope <= 1.5:
+                # Flachstücke & leichtes Rollen: Orientierung an gewähltem Target Factor
+                base_factor = self.target_factor * (1.0 + 0.02 * slope)
+            else:
+                # Anstiege: Progressive Leistungssteigerung (moderat bei falschen Flachstücken, spürbar an echten Bergen)
+                climb_slope = slope - 1.5
+                slope_boost = 0.035 * climb_slope + 0.0025 * (climb_slope ** 1.5)
+                base_factor = self.target_factor * (1.0 + slope_boost)
+            
+            target_watt = base_factor * current_ftp
+            
+            # 2. Biomechanischer & physikalischer Mindest-Kletterleistungs-Floor auf steilen Rampen
+            # Verhindert Umfallen / Abwürgen bei steilen Rampen (z.B. > 8-18%) selbst bei "lockerem" Setup
+            if slope >= 3.0:
+                v_min = 1.95  # ca. 7.0 km/h (entspricht ca. 50-55 U/min im kleinsten Rettungsgang 34/32)
+                sin_theta = s / math.sqrt(1.0 + s**2)
+                f_gravity = self.total_mass * g * sin_theta
+                f_roll = self.total_mass * g * self.crr
+                p_min_crank = ((f_gravity + f_roll) * v_min) / (1.0 - self.loss_dt)
+                target_watt = max(target_watt, p_min_crank)
+            
+            # 3. W'-Begrenzung (anaerober Akku)
+            w_prime_pct = w_prime_current / self.w_prime_max if self.w_prime_max > 0 else 1.0
+            if w_prime_pct > 0.30:
+                max_allowed_watt = current_ftp * 1.45
+            elif w_prime_pct > 0.15:
+                max_allowed_watt = current_ftp * 1.20
+            else:
+                max_allowed_watt = current_ftp * 1.05
+            
+            target_watt = min(target_watt, max(max_allowed_watt, current_ftp * 0.85))
+            if slope <= -5.0:
+                target_watt = 0
+            else:
+                target_watt = int(round(target_watt / 5.0) * 5)
             
             v_mps = self._solve_velocity(target_watt, slope)
             dt = dist_m / v_mps
             cumulative_time_sec += dt
             
+            # 4. Stoffwechsel-Crossover (Kohlenhydrate vs. Fettverbrennung)
+            p_ratio = target_watt / current_ftp if current_ftp > 0 else 1.0
+            f_cho = min(1.0, max(0.15, p_ratio ** 2.2))
+            
             intake_kcal = (self.carb_intake_per_hour / 3600.0) * dt * 4.1
             burned_kcal = (target_watt * dt) / 1000.0
+            glycogen_burned_kcal = burned_kcal * f_cho
             total_burned_kcal += burned_kcal
-            internal_glycogen_kcal = max(0.0, min(self.initial_glycogen_kcal, internal_glycogen_kcal - (burned_kcal - intake_kcal)))
+            
+            internal_glycogen_kcal = max(0.0, min(self.initial_glycogen_kcal, internal_glycogen_kcal - (glycogen_burned_kcal - intake_kcal)))
             
             if target_watt > current_ftp:
                 w_prime_current -= (target_watt - current_ftp) * dt
@@ -532,27 +581,191 @@ class AdvancedPacingOptimizer:
         return self._segment_intervals(df_raw)
 
     def _segment_intervals(self, df_raw):
-        intervals = []
-        current_watt = df_raw.iloc[0]['target_power']
-        start_km = 0.0
-        accumulated_time = 0.0
+        if df_raw.empty:
+            return pd.DataFrame(columns=['start_km', 'end_km', 'duration_min', 'target_watt', 'pct_ftp'])
+            
+        n = len(df_raw)
+        if n == 1:
+            row = df_raw.iloc[0]
+            target_watt = int(row['target_power'])
+            return pd.DataFrame([{
+                'start_km': round(row['dist_km'], 1),
+                'end_km': round(row['dist_km'], 1),
+                'duration_min': round(row['duration_sec'] / 60.0, 1),
+                'target_watt': target_watt,
+                'pct_ftp': round((target_watt / self.initial_ftp) * 100.0, 1)
+            }])
+
+        # 1. Topologische Anstiegsblöcke identifizieren (inkl. kurzer Rampen >= 10m Gain)
+        climb_blocks = []
+        in_c = False
+        start_c = 0
+        for i in range(n):
+            slp = df_raw['slope'].iloc[i]
+            if not in_c and slp >= 2.5:
+                in_c = True
+                start_c = i
+            elif in_c and slp < 1.0:
+                in_c = False
+                gain = df_raw['ele'].iloc[i] - df_raw['ele'].iloc[start_c]
+                dist = (df_raw['dist_km'].iloc[i] - df_raw['dist_km'].iloc[start_c]) * 1000.0
+                avg_s = df_raw['slope'].iloc[start_c:i].mean()
+                # Signifikante Kletterrampe:
+                # - mind. 10m Höhengewinn (selbst bei nur 150-200m Länge)
+                # - oder mind. 8m Höhengewinn bei steilem Gefälle (>= 4%)
+                # - oder mind. 180m Länge bei >= 4%
+                if (gain >= 10.0) or (gain >= 8.0 and avg_s >= 4.0) or (dist >= 180.0 and avg_s >= 4.0):
+                    climb_blocks.append((start_c, i, 'CLIMB'))
+        if in_c:
+            gain = df_raw['ele'].iloc[-1] - df_raw['ele'].iloc[start_c]
+            if gain >= 8.0:
+                climb_blocks.append((start_c, n - 1, 'CLIMB'))
+
+        # 2. Topologische Abfahrtsblöcke identifizieren
+        descent_blocks = []
+        in_d = False
+        start_d = 0
+        for i in range(n):
+            slp = df_raw['slope'].iloc[i]
+            if not in_d and slp <= -2.5:
+                in_d = True
+                start_d = i
+            elif in_d and slp > -1.0:
+                in_d = False
+                drop = df_raw['ele'].iloc[start_d] - df_raw['ele'].iloc[i]
+                dur = df_raw['duration_sec'].iloc[start_d:i].sum()
+                if drop >= 15.0 or (drop >= 8.0 and dur >= 45.0):
+                    descent_blocks.append((start_d, i, 'DESCENT'))
+        if in_d:
+            drop = df_raw['ele'].iloc[start_d] - df_raw['ele'].iloc[-1]
+            if drop >= 10.0:
+                descent_blocks.append((start_d, n - 1, 'DESCENT'))
+
+        # Grenzen an allen Übergängen setzen
+        boundary_indices = set([0, n - 1])
+        for s_idx, e_idx, _ in climb_blocks:
+            boundary_indices.add(s_idx)
+            boundary_indices.add(e_idx)
+        for s_idx, e_idx, _ in descent_blocks:
+            boundary_indices.add(s_idx)
+            boundary_indices.add(e_idx)
+            
+        sorted_boundaries = sorted(boundary_indices)
         
-        for idx, row in df_raw.iterrows():
-            accumulated_time += row['duration_sec']
-            if abs(row['target_power'] - current_watt) > (self.initial_ftp * 0.08) and accumulated_time >= self.min_duration_sec:
-                intervals.append({
-                    'start_km': round(start_km, 1), 'end_km': round(row['dist_km'], 1),
-                    'duration_min': round(accumulated_time / 60.0, 1), 'target_watt': int(current_watt),
-                    'pct_ftp': round((current_watt / self.initial_ftp) * 100, 1)
-                })
-                start_km, current_watt, accumulated_time = row['dist_km'], row['target_power'], 0.0
-            elif idx == len(df_raw) - 1:
-                intervals.append({
-                    'start_km': round(start_km, 1), 'end_km': round(row['dist_km'], 1),
-                    'duration_min': round(accumulated_time / 60.0, 1), 'target_watt': int(current_watt),
-                    'pct_ftp': round((current_watt / self.initial_ftp) * 100, 1)
-                })
-        return pd.DataFrame(intervals)
+        # Rohe Segmente zwischen allen Grenzen bilden
+        raw_segments = []
+        for idx_b in range(len(sorted_boundaries) - 1):
+            i_start = sorted_boundaries[idx_b]
+            i_end = sorted_boundaries[idx_b + 1]
+            chunk = df_raw.iloc[i_start:i_end]
+            if chunk.empty:
+                continue
+            
+            dur_s = chunk['duration_sec'].sum()
+            gain = df_raw['ele'].iloc[i_end] - df_raw['ele'].iloc[i_start]
+            avg_w = (chunk['target_power'] * chunk['duration_sec']).sum() / dur_s if dur_s > 0 else chunk['target_power'].mean()
+            dist_m = (df_raw['dist_km'].iloc[i_end] - df_raw['dist_km'].iloc[i_start]) * 1000.0
+            avg_s = (gain / max(1.0, dist_m)) * 100.0
+            
+            raw_segments.append({
+                'start_idx': i_start,
+                'end_idx': i_end,
+                'start_km': df_raw['dist_km'].iloc[i_start],
+                'end_km': df_raw['dist_km'].iloc[i_end],
+                'dur_s': dur_s,
+                'avg_w': avg_w,
+                'gain_m': gain,
+                'avg_slope': avg_s,
+                'dist_m': dist_m
+            })
+
+        # 3. Pass 1: Nicht-Kicker flach/wellig zusammenfassen
+        merged1 = []
+        cur = None
+        for seg in raw_segments:
+            is_k = (seg['gain_m'] >= 9.0 and seg['avg_slope'] >= 3.0) or (seg['dist_m'] >= 150.0 and seg['gain_m'] >= 10.0)
+            is_d = (seg['gain_m'] <= -12.0 and seg['avg_slope'] <= -2.5)
+            
+            if cur is None:
+                cur = seg
+                continue
+                
+            cur_is_k = (cur['gain_m'] >= 9.0 and cur['avg_slope'] >= 3.0) or (cur['dist_m'] >= 150.0 and cur['gain_m'] >= 10.0)
+            cur_is_d = (cur['gain_m'] <= -12.0 and cur['avg_slope'] <= -2.5)
+            
+            # Kicker werden NIEMALS in Flachstücke oder Abfahrten absorbiert
+            if cur_is_k or is_k:
+                merged1.append(cur)
+                cur = seg
+            elif cur_is_d != is_d:
+                merged1.append(cur)
+                cur = seg
+            elif cur['dur_s'] < self.min_duration_sec or abs(cur['avg_w'] - seg['avg_w']) < (self.initial_ftp * 0.06):
+                total_dur = cur['dur_s'] + seg['dur_s']
+                cur_avg_w = (cur['avg_w'] * cur['dur_s'] + seg['avg_w'] * seg['dur_s']) / total_dur if total_dur > 0 else cur['avg_w']
+                cur = {
+                    'start_idx': cur['start_idx'],
+                    'end_idx': seg['end_idx'],
+                    'start_km': cur['start_km'],
+                    'end_km': seg['end_km'],
+                    'dur_s': total_dur,
+                    'avg_w': cur_avg_w,
+                    'gain_m': cur['gain_m'] + seg['gain_m'],
+                    'avg_slope': ((cur['gain_m'] + seg['gain_m']) / max(1.0, cur['dist_m'] + seg['dist_m'])) * 100.0,
+                    'dist_m': cur['dist_m'] + seg['dist_m']
+                }
+            else:
+                merged1.append(cur)
+                cur = seg
+        if cur is not None:
+            merged1.append(cur)
+            
+        # 4. Pass 2: Winzige Übergangsschnipsel (< 50s oder < 250m), die keine Kicker sind, glätten
+        final_merged = []
+        for it in merged1:
+            is_k = (it['gain_m'] >= 9.0 and it['avg_slope'] >= 3.0) or (it['dist_m'] >= 150.0 and it['gain_m'] >= 10.0)
+            if not final_merged:
+                final_merged.append(it)
+                continue
+            prev = final_merged[-1]
+            prev_is_k = (prev['gain_m'] >= 9.0 and prev['avg_slope'] >= 3.5) or (prev['dist_m'] >= 150.0 and prev['gain_m'] >= 10.0)
+            
+            if not is_k and (it['dur_s'] < 50.0 or it['dist_m'] < 250.0):
+                tot_dur = prev['dur_s'] + it['dur_s']
+                avg_w = (prev['avg_w'] * prev['dur_s'] + it['avg_w'] * it['dur_s']) / tot_dur if tot_dur > 0 else prev['avg_w']
+                prev['end_idx'] = it['end_idx']
+                prev['end_km'] = it['end_km']
+                prev['dur_s'] = tot_dur
+                prev['avg_w'] = avg_w
+                prev['gain_m'] += it['gain_m']
+                prev['dist_m'] += it['dist_m']
+                prev['avg_slope'] = (prev['gain_m'] / max(1.0, prev['dist_m'])) * 100.0
+            elif not prev_is_k and not is_k and abs(prev['avg_w'] - it['avg_w']) < (self.initial_ftp * 0.05):
+                tot_dur = prev['dur_s'] + it['dur_s']
+                avg_w = (prev['avg_w'] * prev['dur_s'] + it['avg_w'] * it['dur_s']) / tot_dur if tot_dur > 0 else prev['avg_w']
+                prev['end_idx'] = it['end_idx']
+                prev['end_km'] = it['end_km']
+                prev['dur_s'] = tot_dur
+                prev['avg_w'] = avg_w
+                prev['gain_m'] += it['gain_m']
+                prev['dist_m'] += it['dist_m']
+                prev['avg_slope'] = (prev['gain_m'] / max(1.0, prev['dist_m'])) * 100.0
+            else:
+                final_merged.append(it)
+
+        # Sichere durchgängige Kilometer-Kette
+        final_merged[0]['start_km'] = df_raw['dist_km'].iloc[0]
+        out = []
+        for it in final_merged:
+            target_watt = int(round(it['avg_w'] / 5.0) * 5)
+            out.append({
+                'start_km': round(it['start_km'], 1),
+                'end_km': round(it['end_km'], 1),
+                'duration_min': round(it['dur_s'] / 60.0, 1),
+                'target_watt': target_watt,
+                'pct_ftp': round((target_watt / self.initial_ftp) * 100.0, 1)
+            })
+        return pd.DataFrame(out)
 
     def generate_nutrition_shopping_list(self, df_intervals):
         total_hours = df_intervals['duration_min'].sum() / 60.0

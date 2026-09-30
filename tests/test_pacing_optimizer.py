@@ -126,3 +126,99 @@ def test_interval_segmentation(optimizer, sample_gpx_path):
     assert df_intervals['start_km'].iloc[0] == pytest.approx(0.0, abs=0.1)
     for i in range(len(df_intervals) - 1):
         assert df_intervals['end_km'].iloc[i] == pytest.approx(df_intervals['start_km'].iloc[i+1], abs=0.1)
+
+
+def test_steep_climbing_power_and_coasting():
+    """Verify that 18% steep climbs demand >300W even when relaxed, and descents allow coasting (0W)."""
+    opt = AdvancedPacingOptimizer(initial_ftp=300, target_factor=0.65, rider_weight=75.0, bike_weight=8.5)
+    
+    # 1. Steep ramp (18%)
+    df_steep = pd.DataFrame([{
+        'distance_km': 0.1, 'segment_len_m': 100.0, 'slope': 18.0,
+        'latitude': 50.0, 'longitude': 5.0, 'elevation': 118.0
+    }])
+    raw_steep = opt.generate_raw_pacing_dataframe(df_steep)
+    # Power must be well above 300W on 18% to maintain minimum rideable cadence/speed
+    assert raw_steep['target_power'].iloc[0] >= 320
+    
+    # 2. Steep descent (-6%)
+    df_desc = pd.DataFrame([{
+        'distance_km': 0.1, 'segment_len_m': 100.0, 'slope': -6.0,
+        'latitude': 50.0, 'longitude': 5.0, 'elevation': 94.0
+    }])
+    raw_desc = opt.generate_raw_pacing_dataframe(df_desc)
+    # Coasting on steep downhill
+    assert raw_desc['target_power'].iloc[0] == 0
+    
+    # 3. Flat (0%)
+    df_flat = pd.DataFrame([{
+        'distance_km': 0.1, 'segment_len_m': 100.0, 'slope': 0.0,
+        'latitude': 50.0, 'longitude': 5.0, 'elevation': 100.0
+    }])
+    raw_flat = opt.generate_raw_pacing_dataframe(df_flat)
+    assert raw_flat['target_power'].iloc[0] == pytest.approx(opt.initial_ftp * opt.target_factor, abs=10)
+
+
+def test_short_steep_kicker_interval_isolation():
+    """Verify that a 200m kicker with >10m elevation gain is isolated into its own distinct interval."""
+    opt = AdvancedPacingOptimizer(initial_ftp=300, target_factor=0.70, rider_weight=75.0, bike_weight=8.5)
+    
+    # Build 2km flat, 200m climb with 16m gain (8% slope), 2km flat
+    points = []
+    dist = 0.0
+    ele = 100.0
+    # 2km flat
+    for _ in range(40):
+        dist += 0.05
+        points.append({'distance_km': dist, 'segment_len_m': 50.0, 'slope': 0.0, 'latitude': 50.0, 'longitude': 5.0, 'elevation': ele})
+    # 200m kicker (4 steps of 50m, 4m gain each -> 16m gain total, 8% slope)
+    for _ in range(4):
+        dist += 0.05
+        ele += 4.0
+        points.append({'distance_km': dist, 'segment_len_m': 50.0, 'slope': 8.0, 'latitude': 50.0, 'longitude': 5.0, 'elevation': ele})
+    # 2km flat
+    for _ in range(40):
+        dist += 0.05
+        points.append({'distance_km': dist, 'segment_len_m': 50.0, 'slope': 0.0, 'latitude': 50.0, 'longitude': 5.0, 'elevation': ele})
+        
+    df_route = pd.DataFrame(points)
+    df_intervals = opt.optimize_pacing(df_route)
+    
+    # Should identify the kicker as a distinct interval with higher wattage
+    assert len(df_intervals) >= 3
+    
+    # Find the kicker interval
+    kicker_int = df_intervals[(df_intervals['start_km'] >= 1.9) & (df_intervals['end_km'] <= 2.4)]
+    assert not kicker_int.empty
+    kicker_row = kicker_int.iloc[0]
+    
+    # Kicker target wattage must be significantly higher than flat pacing (~210W)
+    assert kicker_row['target_watt'] >= 250
+    # Duration of kicker should be ~ 1 minute
+    assert kicker_row['duration_min'] < 2.5
+
+
+def test_duration_spread_between_min_and_max_effort(sample_gpx_path):
+    """Verify noticeable time spread between minimal effort (TF 0.65) and maximal effort (0.95)."""
+    if os.path.exists(sample_gpx_path):
+        opt_min = AdvancedPacingOptimizer(initial_ftp=300, target_factor=0.65)
+        df_route = opt_min.parse_gpx(sample_gpx_path, auto_fetch_elevation=False)
+        raw_min = opt_min.generate_raw_pacing_dataframe(df_route)
+        time_min_sec = raw_min['duration_sec'].sum()
+        
+        opt_max = AdvancedPacingOptimizer(initial_ftp=300, target_factor=0.95)
+        raw_max = opt_max.generate_raw_pacing_dataframe(df_route)
+        time_max_sec = raw_max['duration_sec'].sum()
+        
+        # On a 220+ km route like Ötztaler, spread between 0.65 and 0.95 should be >= 1 hour (3600s)
+        time_diff_hours = (time_min_sec - time_max_sec) / 3600.0
+        assert time_diff_hours >= 1.0
+
+
+def test_velocity_descent_speed_cap():
+    """Verify that descent speed is physically constrained to realistic technical speeds."""
+    opt = AdvancedPacingOptimizer(max_descent_kmh=56.0)
+    v_steep_descent = opt._solve_velocity(target_watt=200, slope_pct=-12.0)
+    
+    # Speed in km/h must not exceed max_descent_kmh
+    assert v_steep_descent * 3.6 <= 56.01

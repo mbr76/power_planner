@@ -45,8 +45,8 @@ except ImportError:
 
 # App Version & Build Metadata
 APP_VERSION = "1.0.0"
-BUILD_NUMBER = "29"
-BUILD_TIMESTAMP = "2026-09-29 13:37:22"
+BUILD_NUMBER = "30"
+BUILD_TIMESTAMP = "2026-09-30 09:35:09"
 
 
 # ==========================================
