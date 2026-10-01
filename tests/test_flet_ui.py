@@ -219,3 +219,142 @@ def test_gearing_and_pacing_mode_controls():
 
     asyncio.run(run())
 
+
+def test_unified_kpi_overview_on_all_three_tabs():
+    """Test that all 3 tabs display the identical Übersicht & Leistungs-KPIs section with 6 cards."""
+    async def run():
+        page = MockPage()
+        await ppf.main(page)
+
+        expected_labels = [
+            "Dauer (Prognose)",
+            "Systemgewicht",
+            "Relative FTP",
+            "ø Leistung",
+            "Normalisierte Leistung",
+            "Gesamtanstieg"
+        ]
+
+        def check_tab_kpis(tab_container):
+            col = tab_container.content
+            kpi_section = col.controls[0]
+            if hasattr(kpi_section, "content") and isinstance(kpi_section.content, ft.Column) and len(kpi_section.content.controls) > 0 and isinstance(kpi_section.content.controls[0], ft.Column):
+                kpi_col = kpi_section.content.controls[0]
+            else:
+                kpi_col = kpi_section
+
+            # Header
+            header_row = kpi_col.controls[0]
+            assert "Übersicht & Leistungs-KPIs" in header_row.controls[1].value
+
+            # ResponsiveRow with 6 KPI Cards
+            cards_row = kpi_col.controls[1]
+            assert len(cards_row.controls) == 6
+            card_labels = [c.content.controls[0].controls[1].value for c in cards_row.controls]
+            assert card_labels == expected_labels
+            card_values = [c.content.controls[1].value for c in cards_row.controls]
+            for v in card_values:
+                assert v != "-" and len(v) > 0
+
+        # Check Tab 1
+        check_tab_kpis(page.controls[0].content)
+
+        # Switch to Tab 2
+        page.navigation_bar.selected_index = 1
+        page.navigation_bar.on_change(ev.Event(name='change', control=page.navigation_bar, data='1'))
+        check_tab_kpis(page.controls[0].content)
+
+        # Switch to Tab 3
+        page.navigation_bar.selected_index = 2
+        page.navigation_bar.on_change(ev.Event(name='change', control=page.navigation_bar, data='2'))
+        check_tab_kpis(page.controls[0].content)
+
+    asyncio.run(run())
+
+
+def test_settings_persistence_save_and_reload():
+    """Test that adjusting sliders and dropdowns persists settings to JSON and reloads them on next startup."""
+    async def run():
+        # First session
+        page1 = MockPage()
+        await ppf.main(page1)
+
+        tab_setup = page1.controls[0].content
+        main_col = tab_setup.content
+
+        # 1. Adjust FTP slider to 340
+        card1_col = main_col.controls[1].content.content
+        ftp_slider = card1_col.controls[1]
+        ftp_slider.on_change(ev.Event(name='change', control=ftp_slider, data='340.0'))
+        ftp_slider.on_change_end(ev.Event(name='change_end', control=ftp_slider, data='340.0'))
+
+        # 2. Adjust Rider Weight slider to 82.5
+        weights_row = card1_col.controls[6]
+        rider_w_slider = weights_row.controls[0].controls[1]
+        rider_w_slider.on_change(ev.Event(name='change', control=rider_w_slider, data='82.5'))
+        rider_w_slider.on_change_end(ev.Event(name='change_end', control=rider_w_slider, data='82.5'))
+
+        # 3. Adjust Lowest Gear dropdown to 30/34
+        card3_col = main_col.controls[5].content.content
+        resp_row = card3_col.controls[2]
+        low_gear_dd = resp_row.controls[0].controls[0]
+        low_gear_dd.on_select(ev.Event(name='select', control=low_gear_dd, data='30/34'))
+
+        # Check that settings were saved to file
+        saved = ppf.load_settings()
+        assert saved["initial_ftp"] == 340
+        assert saved["rider_w"] == 82.5
+        assert saved["lowest_gear_key"] == "30/34"
+
+        # Second session: new page bootstrap
+        page2 = MockPage()
+        await ppf.main(page2)
+
+        # Verify that loaded state reflects saved values
+        tab_setup2 = page2.controls[0].content
+        main_col2 = tab_setup2.content
+        card1_col2 = main_col2.controls[1].content.content
+        ftp_slider2 = card1_col2.controls[1]
+        rider_w_slider2 = card1_col2.controls[6].controls[0].controls[1]
+        low_gear_dd2 = main_col2.controls[5].content.content.controls[2].controls[0].controls[0]
+
+        assert ftp_slider2.value == 340
+        assert rider_w_slider2.value == 82.5
+        assert low_gear_dd2.value == "30/34"
+
+    asyncio.run(run())
+
+
+def test_settings_reset_to_defaults():
+    """Test that clicking the reset button resets all settings to defaults."""
+    async def run():
+        page = MockPage()
+        await ppf.main(page)
+
+        tab_setup = page.controls[0].content
+        main_col = tab_setup.content
+
+        # Change FTP
+        card1_col = main_col.controls[1].content.content
+        ftp_slider = card1_col.controls[1]
+        ftp_slider.on_change(ev.Event(name='change', control=ftp_slider, data='380.0'))
+        ftp_slider.on_change_end(ev.Event(name='change_end', control=ftp_slider, data='380.0'))
+
+        assert ppf.load_settings()["initial_ftp"] == 380
+
+        # Click reset button in hero_dashboard header
+        hero_dashboard = main_col.controls[0]
+        header_row = hero_dashboard.content.controls[2]  # Row with "Fahrereinstellungen & Pacing" and reset button
+        reset_btn = header_row.controls[2]  # ft.IconButton
+        assert reset_btn.icon == ft.Icons.RESTART_ALT
+        reset_btn.on_click(ev.Event(name='click', control=reset_btn))
+
+        # Check values reset
+        assert ftp_slider.value == ppf.DEFAULT_SETTINGS["initial_ftp"]
+        saved = ppf.load_settings()
+        assert saved["initial_ftp"] == ppf.DEFAULT_SETTINGS["initial_ftp"]
+
+    asyncio.run(run())
+
+
+
