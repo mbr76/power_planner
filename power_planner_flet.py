@@ -45,8 +45,8 @@ except ImportError:
 
 # App Version & Build Metadata
 APP_VERSION = "1.0.0"
-BUILD_NUMBER = "32"
-BUILD_TIMESTAMP = "2026-10-01 10:09:19"
+BUILD_NUMBER = "33"
+BUILD_TIMESTAMP = "2026-10-01 10:46:21"
 
 # Übersetzungs-Presets für Berggänge (kleinste Übersetzung) und Abfahrten (größte Übersetzung)
 GEAR_RATIOS_LOW = {
@@ -419,6 +419,153 @@ def get_available_gpx_files():
 
 
 # ==========================================
+# USER PREFERENCES & PERSISTENT STORAGE
+# ==========================================
+
+DEFAULT_SETTINGS = {
+    "initial_ftp": 310,
+    "w_prime": 20000,
+    "rider_w": 76.0,
+    "bike_w": 8.0,
+    "carbs_per_hour": 90,
+    "target_f": 0.82,
+    "lowest_gear_key": "33/34",
+    "highest_gear_key": "46/10",
+    "pacing_mode": "dynamic",
+    "min_climb_cadence": 75.0,
+    "max_pedal_cadence": 105.0,
+    "gpx_path": "oetztaler_route.gpx",
+    "karoo_ip": "",
+    "karoo_token": "",
+}
+
+
+def get_settings_file_path() -> str:
+    """Returns the persistent file path for storing user settings across platforms."""
+    if "POWER_PLANNER_SETTINGS_FILE" in os.environ and os.environ["POWER_PLANNER_SETTINGS_FILE"]:
+        return os.environ["POWER_PLANNER_SETTINGS_FILE"]
+
+    candidates = []
+    if "FLET_APP_STORAGE_DATA" in os.environ and os.environ["FLET_APP_STORAGE_DATA"]:
+        candidates.append(os.path.join(os.environ["FLET_APP_STORAGE_DATA"], "power_planner_settings.json"))
+
+    if "PYTHON_USER_DATA_DIR" in os.environ and os.environ["PYTHON_USER_DATA_DIR"]:
+        candidates.append(os.path.join(os.environ["PYTHON_USER_DATA_DIR"], "power_planner_settings.json"))
+
+    home = os.path.expanduser("~")
+    docs = os.path.join(home, "Documents")
+    if os.path.isdir(docs):
+        candidates.append(os.path.join(docs, "power_planner_settings.json"))
+
+    app_support = os.path.join(home, "Library", "Application Support", "PowerPlanner")
+    candidates.append(os.path.join(app_support, "settings.json"))
+
+    config_dir = os.path.join(home, ".config", "power_planner")
+    candidates.append(os.path.join(config_dir, "settings.json"))
+
+    candidates.append(os.path.join(home, ".power_planner_settings.json"))
+    candidates.append(os.path.join(tempfile.gettempdir(), "power_planner_settings.json"))
+
+    for path in candidates:
+        try:
+            d = os.path.dirname(path)
+            if d and not os.path.exists(d):
+                os.makedirs(d, exist_ok=True)
+            with open(path, "a", encoding="utf-8"):
+                pass
+            return path
+        except Exception:
+            continue
+
+    return os.path.join(tempfile.gettempdir(), "power_planner_settings.json")
+
+
+def load_settings() -> dict:
+    """Loads saved settings from persistent storage."""
+    path = get_settings_file_path()
+    try:
+        if os.path.isfile(path):
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, dict):
+                    return data
+    except Exception as e:
+        print(f"[PowerPlanner] Settings load notice ({path}): {e}")
+    return {}
+
+
+def save_settings(state: dict) -> bool:
+    """Saves current sliders, dropdowns and settings into persistent storage."""
+    path = get_settings_file_path()
+    try:
+        d = os.path.dirname(path)
+        if d and not os.path.exists(d):
+            os.makedirs(d, exist_ok=True)
+
+        data = {
+            "initial_ftp": int(state.get("initial_ftp", DEFAULT_SETTINGS["initial_ftp"])),
+            "w_prime": int(state.get("w_prime", DEFAULT_SETTINGS["w_prime"])),
+            "rider_w": round(float(state.get("rider_w", DEFAULT_SETTINGS["rider_w"])), 1),
+            "bike_w": round(float(state.get("bike_w", DEFAULT_SETTINGS["bike_w"])), 1),
+            "carbs_per_hour": int(state.get("carbs_per_hour", DEFAULT_SETTINGS["carbs_per_hour"])),
+            "target_f": round(float(state.get("target_f", DEFAULT_SETTINGS["target_f"])), 2),
+            "lowest_gear_key": str(state.get("lowest_gear_key", DEFAULT_SETTINGS["lowest_gear_key"])),
+            "highest_gear_key": str(state.get("highest_gear_key", DEFAULT_SETTINGS["highest_gear_key"])),
+            "pacing_mode": str(state.get("pacing_mode", DEFAULT_SETTINGS["pacing_mode"])),
+            "min_climb_cadence": round(float(state.get("min_climb_cadence", DEFAULT_SETTINGS["min_climb_cadence"])), 1),
+            "max_pedal_cadence": round(float(state.get("max_pedal_cadence", DEFAULT_SETTINGS["max_pedal_cadence"])), 1),
+            "gpx_path": str(state.get("gpx_path", DEFAULT_SETTINGS["gpx_path"])),
+            "karoo_ip": str(state.get("karoo_ip", "")),
+            "karoo_token": str(state.get("karoo_token", "")),
+        }
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+        return True
+    except Exception as e:
+        print(f"[PowerPlanner] Settings save notice ({path}): {e}")
+        return False
+
+
+def apply_settings(state: dict, saved: dict):
+    """Safely updates state with loaded persistent values."""
+    if not isinstance(saved, dict):
+        return
+    if "initial_ftp" in saved and isinstance(saved["initial_ftp"], (int, float)) and 100 <= saved["initial_ftp"] <= 500:
+        state["initial_ftp"] = int(saved["initial_ftp"])
+    if "w_prime" in saved and isinstance(saved["w_prime"], (int, float)) and 10000 <= saved["w_prime"] <= 30000:
+        state["w_prime"] = int(saved["w_prime"])
+    if "rider_w" in saved and isinstance(saved["rider_w"], (int, float)) and 40.0 <= saved["rider_w"] <= 130.0:
+        state["rider_w"] = round(float(saved["rider_w"]), 1)
+    if "bike_w" in saved and isinstance(saved["bike_w"], (int, float)) and 5.0 <= saved["bike_w"] <= 20.0:
+        state["bike_w"] = round(float(saved["bike_w"]), 1)
+    if "carbs_per_hour" in saved and isinstance(saved["carbs_per_hour"], (int, float)) and 20 <= saved["carbs_per_hour"] <= 120:
+        state["carbs_per_hour"] = int(saved["carbs_per_hour"])
+    if "target_f" in saved and isinstance(saved["target_f"], (int, float)) and 0.60 <= saved["target_f"] <= 1.00:
+        state["target_f"] = round(float(saved["target_f"]), 2)
+    if "lowest_gear_key" in saved and saved["lowest_gear_key"] in GEAR_RATIOS_LOW:
+        state["lowest_gear_key"] = saved["lowest_gear_key"]
+        state["lowest_gear_ratio"] = GEAR_RATIOS_LOW[saved["lowest_gear_key"]][1]
+    if "highest_gear_key" in saved and saved["highest_gear_key"] in GEAR_RATIOS_HIGH:
+        state["highest_gear_key"] = saved["highest_gear_key"]
+        state["highest_gear_ratio"] = GEAR_RATIOS_HIGH[saved["highest_gear_key"]][1]
+    if "pacing_mode" in saved and saved["pacing_mode"] in ("dynamic", "steady"):
+        state["pacing_mode"] = saved["pacing_mode"]
+    if "min_climb_cadence" in saved and isinstance(saved["min_climb_cadence"], (int, float)) and 60.0 <= saved["min_climb_cadence"] <= 90.0:
+        state["min_climb_cadence"] = round(float(saved["min_climb_cadence"]), 1)
+    if "max_pedal_cadence" in saved and isinstance(saved["max_pedal_cadence"], (int, float)) and 90.0 <= saved["max_pedal_cadence"] <= 125.0:
+        state["max_pedal_cadence"] = round(float(saved["max_pedal_cadence"]), 1)
+    if "gpx_path" in saved and isinstance(saved["gpx_path"], str) and saved["gpx_path"]:
+        resolved = resolve_path(saved["gpx_path"])
+        if resolved and os.path.exists(resolved):
+            state["gpx_path"] = saved["gpx_path"]
+            state["base_filename"] = os.path.splitext(os.path.basename(saved["gpx_path"]))[0]
+    if "karoo_ip" in saved and isinstance(saved["karoo_ip"], str):
+        state["karoo_ip"] = saved["karoo_ip"]
+    if "karoo_token" in saved and isinstance(saved["karoo_token"], str):
+        state["karoo_token"] = saved["karoo_token"]
+
+
+# ==========================================
 # MAIN FLET APPLICATION CONTROLLER
 # ==========================================
 
@@ -444,30 +591,18 @@ async def main(page: ft.Page):
         )
 
     # Application State
-    state = {
-        "initial_ftp": 310,
-        "w_prime": 20000,
-        "rider_w": 76.0,
-        "bike_w": 8.0,
-        "carbs_per_hour": 90,
-        "target_f": 0.82,
-        "gpx_path": "oetztaler_route.gpx",
+    state = dict(DEFAULT_SETTINGS)
+    state.update({
         "gpx_content": None,
-        "base_filename": "oetztaler_route",
+        "base_filename": os.path.splitext(os.path.basename(DEFAULT_SETTINGS["gpx_path"]))[0],
         "df_route": None,
         "calc": None,
-        "karoo_ip": "",
-        "karoo_token": "",
         "logs": [],
-        "pacing_mode": "dynamic",
-        "lowest_gear_key": "33/34",
-        "lowest_gear_ratio": 33.0 / 34.0,
-        "highest_gear_key": "46/10",
-        "highest_gear_ratio": 46.0 / 10.0,
-        "min_climb_cadence": 75.0,
-        "max_pedal_cadence": 105.0,
+        "lowest_gear_ratio": GEAR_RATIOS_LOW[DEFAULT_SETTINGS["lowest_gear_key"]][1],
+        "highest_gear_ratio": GEAR_RATIOS_HIGH[DEFAULT_SETTINGS["highest_gear_key"]][1],
         "wheel_circumference_m": 2.12,
-    }
+    })
+    apply_settings(state, load_settings())
 
     def format_chip_route(path):
         base = os.path.splitext(os.path.basename(path))[0]
@@ -1067,6 +1202,7 @@ async def main(page: ft.Page):
             update_gearing_badge()
             route_status_chip_text.value = format_chip_route(state['gpx_path'])
             route_status_chip.tooltip = os.path.basename(state['gpx_path'])
+            save_settings(state)
             page.update()
         else:
             show_snack(f"Fehler bei der Berechnung: {err}", bgcolor=ft.Colors.RED_700, icon=ft.Icons.ERROR_OUTLINE)
@@ -1382,6 +1518,53 @@ async def main(page: ft.Page):
             col={"xs": 6, "sm": 3},
         )
 
+    ftp_slider = ft.Slider(min=100, max=500, divisions=80, value=state["initial_ftp"], active_color=ft.Colors.AMBER_400, on_change=on_ftp_change, on_change_end=on_ftp_change_end)
+    wprime_slider = ft.Slider(min=10000, max=30000, divisions=20, value=state["w_prime"], active_color=ft.Colors.RED_400, on_change=on_wprime_change, on_change_end=on_wprime_change_end)
+    rider_w_slider = ft.Slider(min=40, max=130, divisions=90, value=state["rider_w"], active_color=ft.Colors.BLUE_400, on_change=on_rider_w_change, on_change_end=on_rider_w_change_end)
+    bike_w_slider = ft.Slider(min=5, max=20, divisions=30, value=state["bike_w"], active_color=ft.Colors.CYAN_400, on_change=on_bike_w_change, on_change_end=on_bike_w_change_end)
+    carbs_slider = ft.Slider(min=20, max=120, divisions=20, value=state["carbs_per_hour"], active_color=ft.Colors.GREEN_400, on_change=on_carbs_change, on_change_end=on_carbs_change_end)
+    target_f_slider = ft.Slider(min=0.60, max=1.00, divisions=40, value=state["target_f"], active_color=ft.Colors.ORANGE_400, on_change=on_target_f_change, on_change_end=on_target_f_change_end)
+
+    def on_reset_settings_click(_):
+        state["initial_ftp"] = DEFAULT_SETTINGS["initial_ftp"]
+        state["w_prime"] = DEFAULT_SETTINGS["w_prime"]
+        state["rider_w"] = DEFAULT_SETTINGS["rider_w"]
+        state["bike_w"] = DEFAULT_SETTINGS["bike_w"]
+        state["carbs_per_hour"] = DEFAULT_SETTINGS["carbs_per_hour"]
+        state["target_f"] = DEFAULT_SETTINGS["target_f"]
+        state["lowest_gear_key"] = DEFAULT_SETTINGS["lowest_gear_key"]
+        state["lowest_gear_ratio"] = GEAR_RATIOS_LOW[DEFAULT_SETTINGS["lowest_gear_key"]][1]
+        state["highest_gear_key"] = DEFAULT_SETTINGS["highest_gear_key"]
+        state["highest_gear_ratio"] = GEAR_RATIOS_HIGH[DEFAULT_SETTINGS["highest_gear_key"]][1]
+        state["pacing_mode"] = DEFAULT_SETTINGS["pacing_mode"]
+        state["min_climb_cadence"] = DEFAULT_SETTINGS["min_climb_cadence"]
+        state["max_pedal_cadence"] = DEFAULT_SETTINGS["max_pedal_cadence"]
+
+        ftp_slider.value = state["initial_ftp"]
+        wprime_slider.value = state["w_prime"]
+        rider_w_slider.value = state["rider_w"]
+        bike_w_slider.value = state["bike_w"]
+        carbs_slider.value = state["carbs_per_hour"]
+        target_f_slider.value = state["target_f"]
+        lowest_gear_dropdown.value = state["lowest_gear_key"]
+        highest_gear_dropdown.value = state["highest_gear_key"]
+        pacing_mode_dropdown.value = state["pacing_mode"]
+        min_cadence_slider.value = state["min_climb_cadence"]
+        max_cadence_slider.value = state["max_pedal_cadence"]
+
+        ftp_val_text.value = f"{state['initial_ftp']} W"
+        wprime_val_text.value = f"{state['w_prime']:,} J"
+        rider_w_val_text.value = f"{state['rider_w']:.1f} kg"
+        bike_w_val_text.value = f"{state['bike_w']:.1f} kg"
+        carbs_val_text.value = f"{state['carbs_per_hour']} g/h"
+        target_f_val_text.value = f"{int(state['target_f'] * 100)} % FTP ({state['target_f']:.2f})"
+        min_cadence_val_text.value = f"{int(state['min_climb_cadence'])} rpm"
+        max_cadence_val_text.value = f"{int(state['max_pedal_cadence'])} rpm"
+
+        save_settings(state)
+        refresh_ui()
+        show_snack("Standardeinstellungen wiederhergestellt.", bgcolor=ft.Colors.BLUE_GREY_800, icon=ft.Icons.RESTORE)
+
     hero_dashboard = ft.Container(
         content=ft.Column([
             build_kpi_overview_section(kpi_controls_t1),
@@ -1393,7 +1576,14 @@ async def main(page: ft.Page):
                     border_radius=8,
                     padding=6,
                 ),
-                ft.Text("Fahrereinstellungen & Pacing", size=15, weight=ft.FontWeight.BOLD),
+                ft.Text("Fahrereinstellungen & Pacing", size=15, weight=ft.FontWeight.BOLD, expand=True),
+                ft.IconButton(
+                    icon=ft.Icons.RESTART_ALT,
+                    icon_size=18,
+                    tooltip="Standardwerte wiederherstellen",
+                    icon_color=ft.Colors.GREY_400,
+                    on_click=on_reset_settings_click,
+                ),
             ], spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER),
         ], spacing=4),
     )
@@ -1419,21 +1609,21 @@ async def main(page: ft.Page):
         content=ft.Container(
             content=ft.Column([
                 make_slider_header(ft.Icons.BOLT, "Start-FTP", ftp_val_text, ft.Colors.AMBER_400),
-                ft.Slider(min=100, max=500, divisions=80, value=state["initial_ftp"], active_color=ft.Colors.AMBER_400, on_change=on_ftp_change, on_change_end=on_ftp_change_end),
+                ftp_slider,
 
                 ft.Divider(height=10, color=ft.Colors.TRANSPARENT),
                 make_slider_header(ft.Icons.BATTERY_CHARGING_FULL, "W'-Kapazität (Akku)", wprime_val_text, ft.Colors.RED_400),
-                ft.Slider(min=10000, max=30000, divisions=20, value=state["w_prime"], active_color=ft.Colors.RED_400, on_change=on_wprime_change, on_change_end=on_wprime_change_end),
+                wprime_slider,
 
                 ft.Divider(height=10, color=ft.Colors.TRANSPARENT),
                 ft.ResponsiveRow([
                     ft.Column([
                         make_slider_header(ft.Icons.PERSON, "Fahrergewicht", rider_w_val_text, ft.Colors.BLUE_400),
-                        ft.Slider(min=40, max=130, divisions=90, value=state["rider_w"], active_color=ft.Colors.BLUE_400, on_change=on_rider_w_change, on_change_end=on_rider_w_change_end),
+                        rider_w_slider,
                     ], col={"xs": 12, "md": 6}),
                     ft.Column([
                         make_slider_header(ft.Icons.DIRECTIONS_BIKE, "Fahrrad & Ausrüstung", bike_w_val_text, ft.Colors.CYAN_400),
-                        ft.Slider(min=5, max=20, divisions=30, value=state["bike_w"], active_color=ft.Colors.CYAN_400, on_change=on_bike_w_change, on_change_end=on_bike_w_change_end),
+                        bike_w_slider,
                     ], col={"xs": 12, "md": 6}),
                 ]),
             ]),
@@ -1457,11 +1647,11 @@ async def main(page: ft.Page):
         content=ft.Container(
             content=ft.Column([
                 make_slider_header(ft.Icons.RESTAURANT, "Kohlenhydrate (g/h)", carbs_val_text, ft.Colors.GREEN_400),
-                ft.Slider(min=20, max=120, divisions=20, value=state["carbs_per_hour"], active_color=ft.Colors.GREEN_400, on_change=on_carbs_change, on_change_end=on_carbs_change_end),
+                carbs_slider,
 
                 ft.Divider(height=10, color=ft.Colors.TRANSPARENT),
                 make_slider_header(ft.Icons.SPEED, "Intensitätsfaktor (Target Factor)", target_f_val_text, ft.Colors.ORANGE_400),
-                ft.Slider(min=0.60, max=1.00, divisions=40, value=state["target_f"], active_color=ft.Colors.ORANGE_400, on_change=on_target_f_change, on_change_end=on_target_f_change_end),
+                target_f_slider,
                 pace_badge,
             ]),
             padding=16,
@@ -1682,9 +1872,11 @@ async def main(page: ft.Page):
     # Transfer Inputs with continuous live state sync for Safari / Mobile
     def on_karoo_ip_change(e):
         state["karoo_ip"] = e.control.value.strip()
+        save_settings(state)
 
     def on_karoo_token_change(e):
         state["karoo_token"] = e.control.value.strip().upper()
+        save_settings(state)
 
     def on_karoo_url_change(e):
         state["karoo_url"] = e.control.value.strip()
@@ -1717,6 +1909,9 @@ async def main(page: ft.Page):
         ip = (karoo_ip_input.value or state.get("karoo_ip") or "").strip()
         token = (karoo_token_input.value or state.get("karoo_token") or "").strip().upper()
         if ip and token:
+            state["karoo_ip"] = ip
+            state["karoo_token"] = token
+            save_settings(state)
             clean_ip = ip.replace("http://", "").replace("https://", "").split(":")[0].rstrip("/")
             full_url = f"http://{clean_ip}:8080/upload?token={token}"
             await do_push_to_karoo(full_url)
