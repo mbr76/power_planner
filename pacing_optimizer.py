@@ -633,6 +633,28 @@ class AdvancedPacingOptimizer:
         df_raw = self.generate_raw_pacing_dataframe(df_route)
         return self._segment_intervals(df_raw)
 
+    def calculate_normalized_power(self, df_raw):
+        """
+        Berechnet die Coggan Normalized Power (NP) aus dem Pacing-DataFrame:
+        1. 1-Sekunden-Expansion basierend auf duration_sec
+        2. 30-Sekunden rollierender Mittelwert
+        3. 4. Potenz, Mittelwert und 4. Wurzel
+        """
+        if df_raw.empty or 'target_power' not in df_raw.columns:
+            return 0.0
+        durations = df_raw['duration_sec'].values
+        powers = df_raw['target_power'].values
+        sec_counts = np.maximum(1, np.round(durations)).astype(int)
+        expanded_p = np.repeat(powers, sec_counts)
+        window = 30
+        if len(expanded_p) >= window:
+            cumsum = np.cumsum(np.insert(expanded_p, 0, 0))
+            p_30s = (cumsum[window:] - cumsum[:-window]) / float(window)
+            return float((np.mean(p_30s ** 4)) ** 0.25)
+        elif len(expanded_p) > 0:
+            return float(np.mean(expanded_p))
+        return 0.0
+
     def _segment_intervals(self, df_raw):
         if df_raw.empty:
             return pd.DataFrame(columns=['start_km', 'end_km', 'duration_min', 'target_watt', 'pct_ftp'])

@@ -45,8 +45,8 @@ except ImportError:
 
 # App Version & Build Metadata
 APP_VERSION = "1.0.0"
-BUILD_NUMBER = "30"
-BUILD_TIMESTAMP = "2026-09-30 09:35:09"
+BUILD_NUMBER = "32"
+BUILD_TIMESTAMP = "2026-10-01 10:09:19"
 
 # Übersetzungs-Presets für Berggänge (kleinste Übersetzung) und Abfahrten (größte Übersetzung)
 GEAR_RATIOS_LOW = {
@@ -554,11 +554,16 @@ async def main(page: ft.Page):
             # Duration-weighted average target power
             avg_target_power = float((df_raw['target_power'] * df_raw['duration_sec']).sum() / total_sec) if total_sec > 0 else 0.0
 
+            # Normalized Power (NP)
+            normalized_power = optimizer.calculate_normalized_power(df_raw) if hasattr(optimizer, "calculate_normalized_power") else avg_target_power
+
             total_km = float(df_raw['distance_km'].iloc[-1]) if not df_raw.empty else 0.0
             if 'elevation' in df_route.columns and not df_route['elevation'].isna().all():
                 pos_ele = float(df_route['elevation'].diff().clip(lower=0).sum())
             else:
                 pos_ele = float((df_route['slope'].clip(lower=0) * (df_route['segment_len_m'] / 100.0)).sum())
+
+            pos_ele_str = f"{int(pos_ele):,} Hm".replace(",", ".") if pos_ele >= 1000 else f"{int(pos_ele)} Hm"
 
             state["calc"] = {
                 "optimizer": optimizer,
@@ -570,8 +575,10 @@ async def main(page: ft.Page):
                 "rel_ftp_str": f"{rel_ftp:.2f} W/kg",
                 "total_carbs_str": f"{total_carbs:.1f} g",
                 "avg_power_str": f"{round(avg_target_power)} W",
+                "np_str": f"{round(normalized_power)} W",
                 "total_km": total_km,
                 "pos_ele": pos_ele,
+                "pos_ele_str": pos_ele_str,
             }
             return True, None
         except Exception as e:
@@ -868,24 +875,38 @@ async def main(page: ft.Page):
 
     update_gearing_badge()
 
-    # Dynamic KPI Cards (Analysis Tab)
-    kpi_time = ft.Text(state["calc"]["duration_str"] if state["calc"] else "-", size=17, weight=ft.FontWeight.BOLD, color=ft.Colors.AMBER_400)
-    kpi_weight = ft.Text(state["calc"]["sys_weight_str"] if state["calc"] else "-", size=17, weight=ft.FontWeight.BOLD, color=ft.Colors.BLUE_400)
-    kpi_rel_ftp = ft.Text(state["calc"]["rel_ftp_str"] if state["calc"] else "-", size=17, weight=ft.FontWeight.BOLD, color=ft.Colors.GREEN_400)
-    kpi_carbs = ft.Text(state["calc"]["total_carbs_str"] if state["calc"] else "-", size=17, weight=ft.FontWeight.BOLD, color=ft.Colors.PURPLE_400)
+    # Dynamic KPI Controls for all 3 Tabs (Dauer, Systemgewicht, Rel. FTP, ø Leistung, Normalisierte Leistung, Gesamtanstieg)
+    def create_tab_kpi_controls():
+        return {
+            "time": ft.Text(state["calc"]["duration_str"] if state["calc"] else "-", size=16, weight=ft.FontWeight.BOLD, color=ft.Colors.AMBER_400),
+            "weight": ft.Text(state["calc"]["sys_weight_str"] if state["calc"] else "-", size=16, weight=ft.FontWeight.BOLD, color=ft.Colors.BLUE_400),
+            "rel_ftp": ft.Text(state["calc"]["rel_ftp_str"] if state["calc"] else "-", size=16, weight=ft.FontWeight.BOLD, color=ft.Colors.GREEN_400),
+            "avg_power": ft.Text(state["calc"]["avg_power_str"] if state["calc"] else "-", size=16, weight=ft.FontWeight.BOLD, color=ft.Colors.LIGHT_BLUE_400),
+            "np": ft.Text(state["calc"]["np_str"] if state["calc"] else "-", size=16, weight=ft.FontWeight.BOLD, color=ft.Colors.ORANGE_400),
+            "ele": ft.Text(state["calc"]["pos_ele_str"] if state["calc"] else "-", size=16, weight=ft.FontWeight.BOLD, color=ft.Colors.PURPLE_400),
+        }
 
-    # Hero Live-KPI Cards (Setup Tab Live-Summary)
-    hero_kpi_time = ft.Text(state["calc"]["duration_str"] if state["calc"] else "-", size=17, weight=ft.FontWeight.BOLD, color=ft.Colors.AMBER_400)
-    hero_kpi_power = ft.Text(state["calc"]["avg_power_str"] if state["calc"] else "-", size=17, weight=ft.FontWeight.BOLD, color=ft.Colors.LIGHT_BLUE_400)
-    hero_kpi_rel_ftp = ft.Text(state["calc"]["rel_ftp_str"] if state["calc"] else "-", size=17, weight=ft.FontWeight.BOLD, color=ft.Colors.GREEN_400)
-    hero_kpi_carbs = ft.Text(state["calc"]["total_carbs_str"] if state["calc"] else "-", size=17, weight=ft.FontWeight.BOLD, color=ft.Colors.PURPLE_400)
+    kpi_controls_t1 = create_tab_kpi_controls()
+    kpi_controls_t2 = create_tab_kpi_controls()
+    kpi_controls_t3 = create_tab_kpi_controls()
+    all_kpi_sets = [kpi_controls_t1, kpi_controls_t2, kpi_controls_t3]
+
+    # Backward-compatible references (for any older code or tests)
+    kpi_time = kpi_controls_t2["time"]
+    kpi_weight = kpi_controls_t2["weight"]
+    kpi_rel_ftp = kpi_controls_t2["rel_ftp"]
+    kpi_carbs = ft.Text(state["calc"]["total_carbs_str"] if state["calc"] else "-", size=16, weight=ft.FontWeight.BOLD, color=ft.Colors.PURPLE_400)
+    hero_kpi_time = kpi_controls_t1["time"]
+    hero_kpi_power = kpi_controls_t1["avg_power"]
+    hero_kpi_rel_ftp = kpi_controls_t1["rel_ftp"]
+    hero_kpi_carbs = kpi_carbs
 
     # Route summary badges for Setup Tab Route Card
     route_dist_badge = ft.Text(f"{state['calc']['total_km']:.1f} km" if state["calc"] and "total_km" in state["calc"] else "-", size=13, weight=ft.FontWeight.BOLD, color=ft.Colors.AMBER_400)
     route_ele_badge = ft.Text(f"{int(state['calc']['pos_ele'])} hm" if state["calc"] and "pos_ele" in state["calc"] else "-", size=13, weight=ft.FontWeight.BOLD, color=ft.Colors.LIGHT_BLUE_400)
     route_name_badge = ft.Text(os.path.basename(state['gpx_path']), size=13, weight=ft.FontWeight.BOLD, no_wrap=True)
 
-    def make_kpi_card(icon, label, value_control, color, col_span=6):
+    def make_kpi_card(icon, label, value_control, color, col_span={"xs": 6, "sm": 4, "md": 2}):
         return ft.Container(
             content=ft.Column([
                 ft.Row([
@@ -903,8 +924,29 @@ async def main(page: ft.Page):
             border_radius=14,
             bgcolor=ft.Colors.with_opacity(0.10, color) if page.theme_mode == ft.ThemeMode.DARK else ft.Colors.with_opacity(0.05, color),
             border=ft.Border.all(1, ft.Colors.with_opacity(0.22, color) if page.theme_mode == ft.ThemeMode.DARK else ft.Colors.with_opacity(0.12, color)),
-            col={"xs": 6, "sm": col_span, "md": 3},
+            col=col_span,
         )
+
+    def build_kpi_overview_section(ctrls):
+        return ft.Column([
+            ft.Row([
+                ft.Container(
+                    content=ft.Icon(ft.Icons.BAR_CHART, size=16, color=ft.Colors.AMBER_400),
+                    bgcolor=ft.Colors.with_opacity(0.15, ft.Colors.AMBER),
+                    border_radius=8,
+                    padding=6,
+                ),
+                ft.Text("Übersicht & Leistungs-KPIs", size=15, weight=ft.FontWeight.BOLD, expand=True),
+            ], spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+            ft.ResponsiveRow([
+                make_kpi_card(ft.Icons.TIMER_OUTLINED, "Dauer (Prognose)", ctrls["time"], ft.Colors.AMBER_400),
+                make_kpi_card(ft.Icons.FITNESS_CENTER_OUTLINED, "Systemgewicht", ctrls["weight"], ft.Colors.BLUE_400),
+                make_kpi_card(ft.Icons.SPEED, "Relative FTP", ctrls["rel_ftp"], ft.Colors.GREEN_400),
+                make_kpi_card(ft.Icons.BOLT, "ø Leistung", ctrls["avg_power"], ft.Colors.LIGHT_BLUE_400),
+                make_kpi_card(ft.Icons.SHOW_CHART, "Normalisierte Leistung", ctrls["np"], ft.Colors.ORANGE_400),
+                make_kpi_card(ft.Icons.LANDSCAPE, "Gesamtanstieg", ctrls["ele"], ft.Colors.PURPLE_400),
+            ], spacing=8, run_spacing=8),
+        ], spacing=10)
 
     # Chart Controls
     img_map = ft.Image(src=render_route_map(), fit=ft.BoxFit.CONTAIN, border_radius=8)
@@ -973,15 +1015,15 @@ async def main(page: ft.Page):
         success, err = run_calculation()
         if success and state["calc"]:
             calc = state["calc"]
-            kpi_time.value = calc["duration_str"]
-            kpi_weight.value = calc["sys_weight_str"]
-            kpi_rel_ftp.value = calc["rel_ftp_str"]
-            kpi_carbs.value = calc["total_carbs_str"]
+            for ctrls in all_kpi_sets:
+                ctrls["time"].value = calc["duration_str"]
+                ctrls["weight"].value = calc["sys_weight_str"]
+                ctrls["rel_ftp"].value = calc["rel_ftp_str"]
+                ctrls["avg_power"].value = calc["avg_power_str"]
+                ctrls["np"].value = calc["np_str"]
+                ctrls["ele"].value = calc["pos_ele_str"]
             
-            hero_kpi_time.value = calc["duration_str"]
-            hero_kpi_power.value = calc["avg_power_str"]
-            hero_kpi_rel_ftp.value = calc["rel_ftp_str"]
-            hero_kpi_carbs.value = calc["total_carbs_str"]
+            kpi_carbs.value = calc["total_carbs_str"]
 
             route_dist_badge.value = f"{calc['total_km']:.1f} km"
             route_ele_badge.value = f"{int(calc['pos_ele'])} hm"
@@ -1342,13 +1384,8 @@ async def main(page: ft.Page):
 
     hero_dashboard = ft.Container(
         content=ft.Column([
-            ft.ResponsiveRow([
-                make_hero_card(ft.Icons.TIMER_OUTLINED, "Zielzeit", hero_kpi_time, ft.Colors.AMBER_400),
-                make_hero_card(ft.Icons.BOLT_OUTLINED, "Ø Leistung", hero_kpi_power, ft.Colors.LIGHT_BLUE_400),
-                make_hero_card(ft.Icons.SPEED, "W/kg", hero_kpi_rel_ftp, ft.Colors.GREEN_400),
-                make_hero_card(ft.Icons.RESTAURANT_OUTLINED, "Gesamt-KH", hero_kpi_carbs, ft.Colors.PURPLE_400),
-            ], spacing=8, run_spacing=8),
-            ft.Divider(height=8, color=ft.Colors.TRANSPARENT),
+            build_kpi_overview_section(kpi_controls_t1),
+            ft.Divider(height=10, color=ft.Colors.TRANSPARENT),
             ft.Row([
                 ft.Container(
                     content=ft.Icon(ft.Icons.TUNE, size=16, color=ft.Colors.AMBER_400),
@@ -1555,21 +1592,7 @@ async def main(page: ft.Page):
     # ----------------------------------------------------
     tab_analysis_view = ft.Container(
         content=ft.Column([
-            ft.Row([
-                ft.Container(
-                    content=ft.Icon(ft.Icons.BAR_CHART, size=16, color=ft.Colors.AMBER_400),
-                    bgcolor=ft.Colors.with_opacity(0.15, ft.Colors.AMBER),
-                    border_radius=8,
-                    padding=6,
-                ),
-                ft.Text("Übersicht & Leistungs-KPIs", size=15, weight=ft.FontWeight.BOLD, expand=True),
-            ], spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER),
-            ft.ResponsiveRow([
-                make_kpi_card(ft.Icons.TIMER_OUTLINED, "Prognose Zeit", kpi_time, ft.Colors.AMBER_400),
-                make_kpi_card(ft.Icons.FITNESS_CENTER_OUTLINED, "Systemgewicht", kpi_weight, ft.Colors.BLUE_400),
-                make_kpi_card(ft.Icons.BOLT_OUTLINED, "Relative FTP", kpi_rel_ftp, ft.Colors.GREEN_400),
-                make_kpi_card(ft.Icons.RESTAURANT_OUTLINED, "Gesamt-KH", kpi_carbs, ft.Colors.PURPLE_400),
-            ], spacing=8, run_spacing=8),
+            build_kpi_overview_section(kpi_controls_t2),
 
             ft.Row([
                 ft.Container(
@@ -2052,6 +2075,8 @@ async def main(page: ft.Page):
 
     tab_sync_view = ft.Container(
         content=ft.Column([
+            build_kpi_overview_section(kpi_controls_t3),
+            ft.Divider(height=10, color=ft.Colors.TRANSPARENT),
             ft.Row([
                 ft.Container(
                     content=ft.Icon(ft.Icons.SEND_TO_MOBILE, size=16, color=ft.Colors.AMBER_400),
