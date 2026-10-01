@@ -159,3 +159,63 @@ def test_ui_qr_camera_and_gpx_controls():
         assert tab_sync is not None
         
     asyncio.run(run())
+
+
+def test_gearing_and_pacing_mode_controls():
+    """Test gearing dropdowns, cadence sliders, and pacing mode selection in Flet UI."""
+    async def run():
+        page = MockPage()
+        await ppf.main(page)
+        
+        tab_setup = page.controls[0].content
+        main_col = tab_setup.content
+        
+        # Check gearing card is at index 5
+        card_gearing_col = main_col.controls[5].content.content
+        pacing_dropdown = card_gearing_col.controls[0]
+        resp_row = card_gearing_col.controls[2]
+        
+        climb_col = resp_row.controls[0]
+        low_gear_dd = climb_col.controls[0]
+        min_cad_slider = climb_col.controls[3]
+        
+        descent_col = resp_row.controls[1]
+        high_gear_dd = descent_col.controls[0]
+        max_cad_slider = descent_col.controls[3]
+        
+        gearing_badge = card_gearing_col.controls[4]
+        assert gearing_badge is not None
+        
+        # Check defaults
+        assert low_gear_dd.value == "33/34"
+        assert high_gear_dd.value == "46/10"
+        assert min_cad_slider.value == 75.0
+        assert max_cad_slider.value == 105.0
+        assert pacing_dropdown.value == "dynamic"
+        
+        # Change lowest gear to 30/34 (GRX subcompact)
+        low_gear_dd.on_select(ev.Event(name='select', control=low_gear_dd, data='30/34'))
+        assert low_gear_dd.value == "30/34"
+        
+        # Change highest gear to 50/11
+        high_gear_dd.on_select(ev.Event(name='select', control=high_gear_dd, data='50/11'))
+        assert high_gear_dd.value == "50/11"
+        
+        # Change min cadence to 80 rpm
+        min_cad_slider.on_change(ev.Event(name='change', control=min_cad_slider, data='80.0'))
+        min_cad_slider.on_change_end(ev.Event(name='change_end', control=min_cad_slider, data='80.0'))
+        
+        # Change max cadence to 110 rpm
+        max_cad_slider.on_change(ev.Event(name='change', control=max_cad_slider, data='110.0'))
+        max_cad_slider.on_change_end(ev.Event(name='change_end', control=max_cad_slider, data='110.0'))
+        
+        # Switch pacing mode to steady
+        pacing_dropdown.on_select(ev.Event(name='select', control=pacing_dropdown, data='steady'))
+        assert pacing_dropdown.value == "steady"
+        
+        # Switch back to dynamic
+        pacing_dropdown.on_select(ev.Event(name='select', control=pacing_dropdown, data='dynamic'))
+        assert pacing_dropdown.value == "dynamic"
+
+    asyncio.run(run())
+

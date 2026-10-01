@@ -57,8 +57,11 @@ def _apply_elevation_and_slope(df):
 class AdvancedPacingOptimizer:
     def __init__(self, initial_ftp=300, w_prime_max=20000, target_factor=0.82, 
                  min_duration_sec=300, carb_intake_per_hour=90,
-                 rider_weight=75.0, bike_weight=8.5, cda=0.35, crr=0.005,
-                 initial_glycogen_kcal=2000.0, max_descent_kmh=56.0):
+                 rider_weight=75.0, bike_weight=8.5, cda=0.32, crr=0.0045,
+                 initial_glycogen_kcal=2000.0, max_descent_kmh=56.0,
+                 lowest_gear_ratio=33.0 / 34.0, highest_gear_ratio=46.0 / 10.0,
+                 min_climb_cadence=75.0, max_pedal_cadence=105.0,
+                 wheel_circumference_m=2.12, pacing_mode="dynamic"):
         self.initial_ftp = initial_ftp
         self.w_prime_max = w_prime_max
         self.target_factor = target_factor
@@ -73,29 +76,54 @@ class AdvancedPacingOptimizer:
         self.loss_dt = 0.03
         self.initial_glycogen_kcal = initial_glycogen_kcal
         self.max_descent_kmh = max_descent_kmh
+        self.lowest_gear_ratio = lowest_gear_ratio
+        self.highest_gear_ratio = highest_gear_ratio
+        self.min_climb_cadence = min_climb_cadence
+        self.max_pedal_cadence = max_pedal_cadence
+        self.wheel_circumference_m = wheel_circumference_m
+        self.pacing_mode = pacing_mode
         self.elevation_source = "gpx"
         self.elevation_error = None
 
     def _solve_velocity(self, target_watt, slope_pct):
         s = slope_pct / 100.0
         g = 9.81
-        # Effektive Leistung am Hinterrad (Kettenverlust einbezogen)
         p_wheel = max(target_watt * (1.0 - self.loss_dt), 0.0)
-        # Konstante Kräfte (Hangabtrieb + Rollwiderstand)
         f_constant = (self.total_mass * g * s) + (self.total_mass * g * self.crr)
-        # Bisektion-Suchbereich: Zwischen 1.50 m/s (5.4 km/h) und maximaler technischer Abfahrtsgeschwindigkeit
+        
+        # Maximale technische/sicherheitsrelevante Abfahrtsgeschwindigkeit
         v_max_mps = self.max_descent_kmh / 3.6
+        
+        # Maximale Geschwindigkeit, bei der mit dem größten Gang noch mitgetreten werden kann
+        v_max_pedal_mps = (self.max_pedal_cadence / 60.0) * self.highest_gear_ratio * self.wheel_circumference_m
+
+        # Freie Rollgeschwindigkeit ohne Treten (rein aus Hangabtrieb bei f_constant < 0)
+        if f_constant < 0:
+            v_coast = math.sqrt(max(0.0, (-2.0 * f_constant) / (self.cda * self.rho)))
+        else:
+            v_coast = 0.0
+
+        # Bisektion-Suchbereich
         low, high = 1.50, v_max_mps
         for _ in range(16):
             mid = (low + high) / 2.0
-            # Physikalische Leistungsgleichung: P = F_luft * v + F_konstant * v
             p_calc = (0.5 * self.cda * self.rho * (mid**3)) + (f_constant * mid)
             if p_calc > p_wheel:
                 high = mid  # Zu schnell für die getretene Leistung
             else:
                 low = mid   # Mehr Leistung vorhanden, schneller fahren
                 
-        return (low + high) / 2.0
+        v_pedal = (low + high) / 2.0
+
+        # Übersetzungsbegrenzung bei Abfahrten:
+        # Treten kann die Geschwindigkeit nicht über v_max_pedal_mps hinaus steigern (Spin-out).
+        # Ist Hangabtrieb alleine schneller als die Tretgrenze, rollt das Rad rein gravitativ weiter.
+        if target_watt > 0:
+            v_effective = max(v_coast, min(v_pedal, v_max_pedal_mps))
+        else:
+            v_effective = v_pedal
+
+        return min(v_effective, v_max_mps)
 
     def enrich_elevation_from_api(self, df, progress_callback=None, timeout_per_request=8.0, total_timeout=40.0):
         """
@@ -435,35 +463,60 @@ class AdvancedPacingOptimizer:
             current_ftp = self.initial_ftp * (1.0 - (0.10 * (tank_emptiness_pct ** 2)))
             
             # 1. Neigungsabhängiges Pacing:
-            if slope < -5.0:
-                # Steile Abfahrten: Rollen lassen / aktive Erholung
-                base_factor = 0.0
-            elif slope < -1.5:
-                # Leichte Gefälle: Sanftes Mittreten
-                ratio = (slope - (-5.0)) / 3.5
-                base_factor = ratio * (self.target_factor * 0.45)
-            elif slope <= 1.5:
-                # Flachstücke & leichtes Rollen: Orientierung an gewähltem Target Factor
-                base_factor = self.target_factor * (1.0 + 0.02 * slope)
+            if getattr(self, "pacing_mode", "dynamic") == "dynamic":
+                # Dynamisches / empirisch kalibriertes Pacing:
+                # - Flachland-Erholung (Zone 2, ~65-72% FTP bei 0%), verhindert unnötigen Körnerverschleiß
+                # - Kontinuierlicher Übergang ohne Phasensprung bei -1.5%
+                # - Progressiver Steigungsboost an Rampen
+                if slope < -5.0:
+                    base_factor = 0.0
+                elif slope < -1.5:
+                    ratio = (slope - (-5.0)) / 3.5
+                    base_factor = ratio * (self.target_factor * 0.55)
+                elif slope <= 1.5:
+                    flat_ratio = (slope - (-1.5)) / 3.0
+                    base_factor = self.target_factor * (0.55 + 0.45 * flat_ratio)
+                else:
+                    climb_slope = slope - 1.5
+                    slope_boost = 0.035 * climb_slope + 0.0025 * (climb_slope ** 1.5)
+                    base_factor = self.target_factor * (1.0 + slope_boost)
             else:
-                # Anstiege: Progressive Leistungssteigerung (moderat bei falschen Flachstücken, spürbar an echten Bergen)
-                climb_slope = slope - 1.5
-                slope_boost = 0.035 * climb_slope + 0.0025 * (climb_slope ** 1.5)
-                base_factor = self.target_factor * (1.0 + slope_boost)
+                # Steady-Modus (Klassische Variante)
+                if slope < -5.0:
+                    base_factor = 0.0
+                elif slope < -1.5:
+                    ratio = (slope - (-5.0)) / 3.5
+                    base_factor = ratio * (self.target_factor * 0.45)
+                elif slope <= 1.5:
+                    base_factor = self.target_factor * (1.0 + 0.02 * slope)
+                else:
+                    climb_slope = slope - 1.5
+                    slope_boost = 0.035 * climb_slope + 0.0025 * (climb_slope ** 1.5)
+                    base_factor = self.target_factor * (1.0 + slope_boost)
             
             target_watt = base_factor * current_ftp
             
-            # 2. Biomechanischer & physikalischer Mindest-Kletterleistungs-Floor auf steilen Rampen
-            # Verhindert Umfallen / Abwürgen bei steilen Rampen (z.B. > 8-18%) selbst bei "lockerem" Setup
+            # 2. Biomechanischer Kletter-Floor basierend auf kleinster Übersetzung & Mindestkadenz
+            # Verhindert Umfallen / Abwürgen im kleinsten Gang
             if slope >= 3.0:
-                v_min = 1.95  # ca. 7.0 km/h (entspricht ca. 50-55 U/min im kleinsten Rettungsgang 34/32)
+                v_min_climb = (self.min_climb_cadence / 60.0) * self.lowest_gear_ratio * self.wheel_circumference_m
                 sin_theta = s / math.sqrt(1.0 + s**2)
                 f_gravity = self.total_mass * g * sin_theta
                 f_roll = self.total_mass * g * self.crr
-                p_min_crank = ((f_gravity + f_roll) * v_min) / (1.0 - self.loss_dt)
+                p_min_crank = ((f_gravity + f_roll) * v_min_climb) / (1.0 - self.loss_dt)
                 target_watt = max(target_watt, p_min_crank)
-            
-            # 3. W'-Begrenzung (anaerober Akku)
+
+            # 3. Spin-Out Begrenzung bei Abfahrten:
+            # Wenn Hangabtrieb alleine bereits die Tretgrenze mit dem größten Gang erreicht,
+            # wird nicht mehr getreten (0 W / Rollen lassen).
+            v_max_pedal_mps = (self.max_pedal_cadence / 60.0) * self.highest_gear_ratio * self.wheel_circumference_m
+            f_constant_check = (self.total_mass * g * s) + (self.total_mass * g * self.crr)
+            if f_constant_check < 0:
+                v_coast_check = math.sqrt(max(0.0, (-2.0 * f_constant_check) / (self.cda * self.rho)))
+                if v_coast_check >= (v_max_pedal_mps * 0.98):
+                    target_watt = 0.0
+
+            # 4. W'-Begrenzung (anaerober Akku)
             w_prime_pct = w_prime_current / self.w_prime_max if self.w_prime_max > 0 else 1.0
             if w_prime_pct > 0.30:
                 max_allowed_watt = current_ftp * 1.45
@@ -473,7 +526,7 @@ class AdvancedPacingOptimizer:
                 max_allowed_watt = current_ftp * 1.05
             
             target_watt = min(target_watt, max(max_allowed_watt, current_ftp * 0.85))
-            if slope <= -5.0:
+            if slope <= -5.0 or target_watt <= 0.0:
                 target_watt = 0
             else:
                 target_watt = int(round(target_watt / 5.0) * 5)

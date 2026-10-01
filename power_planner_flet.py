@@ -48,6 +48,29 @@ APP_VERSION = "1.0.0"
 BUILD_NUMBER = "30"
 BUILD_TIMESTAMP = "2026-09-30 09:35:09"
 
+# Übersetzungs-Presets für Berggänge (kleinste Übersetzung) und Abfahrten (größte Übersetzung)
+GEAR_RATIOS_LOW = {
+    "33/34": ("33 / 34 (0.97) — SRAM AXS Berg (z.B. 46/33 × 10-34)", 33.0 / 34.0),
+    "34/34": ("34 / 34 (1.00) — Shimano Compact Berg (34 × 34)", 34.0 / 34.0),
+    "30/34": ("30 / 34 (0.88) — Shimano GRX Subcompact (30 × 34)", 30.0 / 34.0),
+    "34/32": ("34 / 32 (1.06) — Shimano Compact Standard (34 × 32)", 34.0 / 32.0),
+    "36/30": ("36 / 30 (1.20) — Semi-Compact Berg (36 × 30)", 36.0 / 30.0),
+    "39/28": ("39 / 28 (1.39) — Klassisch Standard (39 × 28)", 39.0 / 28.0),
+    "38/44": ("38 / 44 (0.86) — 1x Gravel Berg (38 × 10-44)", 38.0 / 44.0),
+    "40/44": ("40 / 44 (0.91) — 1x Gravel Berg (40 × 10-44)", 40.0 / 44.0),
+}
+
+GEAR_RATIOS_HIGH = {
+    "46/10": ("46 / 10 (4.60) — SRAM AXS Allroad (46 × 10)", 46.0 / 10.0),
+    "48/10": ("48 / 10 (4.80) — SRAM AXS Road (48 × 10)", 48.0 / 10.0),
+    "50/10": ("50 / 10 (5.00) — SRAM AXS Aero (50 × 10)", 50.0 / 10.0),
+    "50/11": ("50 / 11 (4.55) — Shimano Compact (50 × 11)", 50.0 / 11.0),
+    "52/11": ("52 / 11 (4.73) — Shimano Semi-Compact (52 × 11)", 52.0 / 11.0),
+    "54/11": ("54 / 11 (4.91) — Shimano Pro / TT (54 × 11)", 54.0 / 11.0),
+    "40/10": ("40 / 10 (4.00) — 1x Gravel Speed (40 × 10)", 40.0 / 10.0),
+}
+
+
 
 # ==========================================
 # HELPER FUNCTIONS & NETWORK LOGIC
@@ -435,7 +458,15 @@ async def main(page: ft.Page):
         "calc": None,
         "karoo_ip": "",
         "karoo_token": "",
-        "logs": []
+        "logs": [],
+        "pacing_mode": "dynamic",
+        "lowest_gear_key": "33/34",
+        "lowest_gear_ratio": 33.0 / 34.0,
+        "highest_gear_key": "46/10",
+        "highest_gear_ratio": 46.0 / 10.0,
+        "min_climb_cadence": 75.0,
+        "max_pedal_cadence": 105.0,
+        "wheel_circumference_m": 2.12,
     }
 
     def format_chip_route(path):
@@ -492,7 +523,13 @@ async def main(page: ft.Page):
                 target_factor=state["target_f"],
                 carb_intake_per_hour=state["carbs_per_hour"],
                 rider_weight=state["rider_w"],
-                bike_weight=state["bike_w"]
+                bike_weight=state["bike_w"],
+                lowest_gear_ratio=state.get("lowest_gear_ratio", 33.0 / 34.0),
+                highest_gear_ratio=state.get("highest_gear_ratio", 46.0 / 10.0),
+                min_climb_cadence=state.get("min_climb_cadence", 75.0),
+                max_pedal_cadence=state.get("max_pedal_cadence", 105.0),
+                wheel_circumference_m=state.get("wheel_circumference_m", 2.12),
+                pacing_mode=state.get("pacing_mode", "dynamic"),
             )
             if state["df_route"] is None:
                 source = state.get("gpx_content") or resolve_path(state["gpx_path"])
@@ -794,6 +831,43 @@ async def main(page: ft.Page):
 
     update_pace_badge()
 
+    # Gearing & Cadence Feedback Badge
+    gearing_badge_climb_speed = ft.Text(size=12, weight=ft.FontWeight.BOLD, color=ft.Colors.PURPLE_200)
+    gearing_badge_descent_speed = ft.Text(size=12, weight=ft.FontWeight.BOLD, color=ft.Colors.PURPLE_200)
+    gearing_badge = ft.Container(
+        content=ft.Row([
+            ft.Row([
+                ft.Icon(ft.Icons.TRENDING_UP, size=15, color=ft.Colors.PURPLE_400),
+                ft.Text("Min. Bergtempo:", size=11, color=ft.Colors.GREY_300),
+                gearing_badge_climb_speed,
+            ], spacing=5),
+            ft.Row([
+                ft.Icon(ft.Icons.TRENDING_DOWN, size=15, color=ft.Colors.DEEP_PURPLE_400),
+                ft.Text("Spin-Out Abfahrt:", size=11, color=ft.Colors.GREY_300),
+                gearing_badge_descent_speed,
+            ], spacing=5),
+        ], alignment=ft.MainAxisAlignment.SPACE_AROUND, wrap=True),
+        bgcolor=ft.Colors.with_opacity(0.12, ft.Colors.PURPLE),
+        border=ft.Border.all(1, ft.Colors.with_opacity(0.25, ft.Colors.PURPLE)),
+        padding=ft.Padding.symmetric(horizontal=12, vertical=8),
+        border_radius=10,
+    )
+
+    def update_gearing_badge():
+        circ = state.get("wheel_circumference_m", 2.12)
+        low_ratio = state.get("lowest_gear_ratio", 33.0 / 34.0)
+        high_ratio = state.get("highest_gear_ratio", 46.0 / 10.0)
+        min_cad = state.get("min_climb_cadence", 75.0)
+        max_cad = state.get("max_pedal_cadence", 105.0)
+
+        min_speed = min_cad * low_ratio * circ * 60.0 / 1000.0
+        max_speed = max_cad * high_ratio * circ * 60.0 / 1000.0
+
+        gearing_badge_climb_speed.value = f"{min_speed:.1f} km/h"
+        gearing_badge_descent_speed.value = f"{max_speed:.1f} km/h"
+
+    update_gearing_badge()
+
     # Dynamic KPI Cards (Analysis Tab)
     kpi_time = ft.Text(state["calc"]["duration_str"] if state["calc"] else "-", size=17, weight=ft.FontWeight.BOLD, color=ft.Colors.AMBER_400)
     kpi_weight = ft.Text(state["calc"]["sys_weight_str"] if state["calc"] else "-", size=17, weight=ft.FontWeight.BOLD, color=ft.Colors.BLUE_400)
@@ -948,6 +1022,7 @@ async def main(page: ft.Page):
                 state["charts_dirty"] = True
 
             update_pace_badge()
+            update_gearing_badge()
             route_status_chip_text.value = format_chip_route(state['gpx_path'])
             route_status_chip.tooltip = os.path.basename(state['gpx_path'])
             page.update()
@@ -1036,6 +1111,104 @@ async def main(page: ft.Page):
     bike_w_val_text = ft.Text(f"{state['bike_w']:.1f} kg", weight=ft.FontWeight.BOLD, size=14, color=ft.Colors.CYAN_400)
     carbs_val_text = ft.Text(f"{state['carbs_per_hour']} g/h", weight=ft.FontWeight.BOLD, size=14, color=ft.Colors.GREEN_400)
     target_f_val_text = ft.Text(f"{int(state['target_f'] * 100)} % FTP ({state['target_f']:.2f})", weight=ft.FontWeight.BOLD, size=14, color=ft.Colors.ORANGE_400)
+
+    # Handlers & Controls for Gearing, Cadence & Pacing Mode
+    def on_lowest_gear_change(e):
+        key = getattr(e, "data", None) or getattr(e.control, "value", None)
+        if key in GEAR_RATIOS_LOW:
+            state["lowest_gear_key"] = key
+            state["lowest_gear_ratio"] = GEAR_RATIOS_LOW[key][1]
+            lowest_gear_dropdown.value = key
+            update_gearing_badge()
+            refresh_ui()
+
+    def on_highest_gear_change(e):
+        key = getattr(e, "data", None) or getattr(e.control, "value", None)
+        if key in GEAR_RATIOS_HIGH:
+            state["highest_gear_key"] = key
+            state["highest_gear_ratio"] = GEAR_RATIOS_HIGH[key][1]
+            highest_gear_dropdown.value = key
+            update_gearing_badge()
+            refresh_ui()
+
+    def on_min_cadence_change(e):
+        val = round(float(e.data)) if getattr(e, "data", None) is not None else int(e.control.value)
+        state["min_climb_cadence"] = float(val)
+        min_cadence_val_text.value = f"{val} rpm"
+        update_gearing_badge()
+        page.update()
+
+    def on_min_cadence_change_end(e):
+        val = round(float(e.data)) if getattr(e, "data", None) is not None else int(e.control.value)
+        state["min_climb_cadence"] = float(val)
+        min_cadence_val_text.value = f"{val} rpm"
+        update_gearing_badge()
+        refresh_ui()
+
+    def on_max_cadence_change(e):
+        val = round(float(e.data)) if getattr(e, "data", None) is not None else int(e.control.value)
+        state["max_pedal_cadence"] = float(val)
+        max_cadence_val_text.value = f"{val} rpm"
+        update_gearing_badge()
+        page.update()
+
+    def on_max_cadence_change_end(e):
+        val = round(float(e.data)) if getattr(e, "data", None) is not None else int(e.control.value)
+        state["max_pedal_cadence"] = float(val)
+        max_cadence_val_text.value = f"{val} rpm"
+        update_gearing_badge()
+        refresh_ui()
+
+    def on_pacing_mode_change(e):
+        val = getattr(e, "data", None) or getattr(e.control, "value", None)
+        if val in ("dynamic", "steady"):
+            state["pacing_mode"] = str(val)
+            pacing_mode_dropdown.value = val
+            refresh_ui()
+
+    min_cadence_val_text = ft.Text(f"{int(state['min_climb_cadence'])} rpm", weight=ft.FontWeight.BOLD, size=14, color=ft.Colors.PURPLE_300)
+    max_cadence_val_text = ft.Text(f"{int(state['max_pedal_cadence'])} rpm", weight=ft.FontWeight.BOLD, size=14, color=ft.Colors.DEEP_PURPLE_300)
+
+    lowest_gear_dropdown = ft.Dropdown(
+        label="Kleinste Übersetzung (Berggang)",
+        options=[ft.dropdown.Option(key=k, text=v[0]) for k, v in GEAR_RATIOS_LOW.items()],
+        value=state["lowest_gear_key"],
+        expand=True,
+        on_select=on_lowest_gear_change,
+    )
+
+    highest_gear_dropdown = ft.Dropdown(
+        label="Größte Übersetzung (Abfahrtsgang)",
+        options=[ft.dropdown.Option(key=k, text=v[0]) for k, v in GEAR_RATIOS_HIGH.items()],
+        value=state["highest_gear_key"],
+        expand=True,
+        on_select=on_highest_gear_change,
+    )
+
+    pacing_mode_dropdown = ft.Dropdown(
+        label="Pacing-Kurve / Berechnungsmodell",
+        options=[
+            ft.dropdown.Option(key="dynamic", text="📈 Dynamisch (kontinuierlich, Z2 im Flachen, wattgesteuert am Berg)"),
+            ft.dropdown.Option(key="steady", text="📊 Klassisch Stufe (Fix 130 W im Flachen ab -1.5%)"),
+        ],
+        value=state["pacing_mode"],
+        expand=True,
+        on_select=on_pacing_mode_change,
+    )
+
+    min_cadence_slider = ft.Slider(
+        min=60, max=90, divisions=30, value=state["min_climb_cadence"],
+        active_color=ft.Colors.PURPLE_400,
+        on_change=on_min_cadence_change,
+        on_change_end=on_min_cadence_change_end,
+    )
+
+    max_cadence_slider = ft.Slider(
+        min=90, max=125, divisions=35, value=state["max_pedal_cadence"],
+        active_color=ft.Colors.DEEP_PURPLE_400,
+        on_change=on_max_cadence_change,
+        on_change_end=on_max_cadence_change_end,
+    )
 
     # FilePicker (Registered as a service in Flet 0.86+)
     file_picker = ft.FilePicker()
@@ -1260,6 +1433,44 @@ async def main(page: ft.Page):
         shape=ft.RoundedRectangleBorder(radius=16),
     )
 
+    section_gearing_header = ft.Row([
+        ft.Container(
+            content=ft.Icon(ft.Icons.SETTINGS_INPUT_COMPONENT, size=16, color=ft.Colors.PURPLE_400),
+            bgcolor=ft.Colors.with_opacity(0.15, ft.Colors.PURPLE),
+            border_radius=8,
+            padding=6,
+        ),
+        ft.Text("Übersetzung, Trittfrequenz & Pacing-Kurve", size=15, weight=ft.FontWeight.BOLD),
+    ], spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER)
+
+    card_gearing = ft.Card(
+        content=ft.Container(
+            content=ft.Column([
+                pacing_mode_dropdown,
+                ft.Divider(height=10, color=ft.Colors.TRANSPARENT),
+                ft.ResponsiveRow([
+                    ft.Column([
+                        lowest_gear_dropdown,
+                        ft.Container(height=4),
+                        make_slider_header(ft.Icons.ROTATE_RIGHT, "Minimale Kletter-Kadenz", min_cadence_val_text, ft.Colors.PURPLE_300),
+                        min_cadence_slider,
+                    ], col={"xs": 12, "md": 6}),
+                    ft.Column([
+                        highest_gear_dropdown,
+                        ft.Container(height=4),
+                        make_slider_header(ft.Icons.FAST_FORWARD, "Maximale Pedalier-Kadenz (Spin-Out)", max_cadence_val_text, ft.Colors.DEEP_PURPLE_300),
+                        max_cadence_slider,
+                    ], col={"xs": 12, "md": 6}),
+                ]),
+                ft.Divider(height=6, color=ft.Colors.TRANSPARENT),
+                gearing_badge,
+            ], spacing=8),
+            padding=16,
+            border_radius=16,
+        ),
+        shape=ft.RoundedRectangleBorder(radius=16),
+    )
+
     section3_header = ft.Row([
         ft.Container(
             content=ft.Icon(ft.Icons.ROUTE, size=16, color=ft.Colors.LIGHT_BLUE_400),
@@ -1330,6 +1541,8 @@ async def main(page: ft.Page):
             card1,
             section2_header,
             card2,
+            section_gearing_header,
+            card_gearing,
             section3_header,
             card3,
         ], spacing=16, scroll=ft.ScrollMode.AUTO, expand=True),

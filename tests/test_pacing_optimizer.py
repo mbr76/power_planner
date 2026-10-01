@@ -156,7 +156,13 @@ def test_steep_climbing_power_and_coasting():
         'latitude': 50.0, 'longitude': 5.0, 'elevation': 100.0
     }])
     raw_flat = opt.generate_raw_pacing_dataframe(df_flat)
-    assert raw_flat['target_power'].iloc[0] == pytest.approx(opt.initial_ftp * opt.target_factor, abs=10)
+    # Dynamic mode saves energy on flats (Zone 2 cruising around 77% of target factor)
+    assert raw_flat['target_power'].iloc[0] == pytest.approx(opt.initial_ftp * opt.target_factor * 0.775, abs=15)
+    
+    # In steady mode, flat is strictly initial_ftp * target_factor
+    opt_steady = AdvancedPacingOptimizer(initial_ftp=300, target_factor=0.65, pacing_mode="steady")
+    raw_flat_steady = opt_steady.generate_raw_pacing_dataframe(df_flat)
+    assert raw_flat_steady['target_power'].iloc[0] == pytest.approx(opt_steady.initial_ftp * opt_steady.target_factor, abs=10)
 
 
 def test_short_steep_kicker_interval_isolation():
@@ -222,3 +228,65 @@ def test_velocity_descent_speed_cap():
     
     # Speed in km/h must not exceed max_descent_kmh
     assert v_steep_descent * 3.6 <= 56.01
+
+
+def test_lowest_gear_ratio_affects_climbing_floor():
+    """Verify that a harder lowest gear (e.g. 39/28 vs 33/34) raises the minimum power floor on steep ramps."""
+    opt_easy = AdvancedPacingOptimizer(
+        initial_ftp=300, target_factor=0.65, rider_weight=80.0, bike_weight=10.0,
+        lowest_gear_ratio=33.0 / 34.0, min_climb_cadence=75.0
+    )
+    opt_hard = AdvancedPacingOptimizer(
+        initial_ftp=300, target_factor=0.65, rider_weight=80.0, bike_weight=10.0,
+        lowest_gear_ratio=39.0 / 28.0, min_climb_cadence=75.0
+    )
+    
+    df_steep = pd.DataFrame([{
+        'distance_km': 0.1, 'segment_len_m': 100.0, 'slope': 12.0,
+        'latitude': 50.0, 'longitude': 5.0, 'elevation': 112.0
+    }])
+    
+    raw_easy = opt_easy.generate_raw_pacing_dataframe(df_steep)
+    raw_hard = opt_hard.generate_raw_pacing_dataframe(df_steep)
+    
+    # Harder gear requires higher speed and therefore significantly higher floor wattage at the same cadence
+    assert raw_hard['target_power'].iloc[0] > raw_easy['target_power'].iloc[0]
+    assert raw_hard['target_power'].iloc[0] >= 340
+
+
+def test_highest_gear_ratio_limits_downhill_pedaling_speed():
+    """Verify that pedaling speed on mild descents is constrained by top gear spin-out limit."""
+    # 46/10 at 105 rpm -> ~61.4 km/h max pedaling speed
+    opt_46_10 = AdvancedPacingOptimizer(
+        highest_gear_ratio=46.0 / 10.0, max_pedal_cadence=105.0,
+        wheel_circumference_m=2.12, max_descent_kmh=75.0
+    )
+    # 46/11 at 95 rpm -> ~50.6 km/h max pedaling speed
+    opt_46_11 = AdvancedPacingOptimizer(
+        highest_gear_ratio=46.0 / 11.0, max_pedal_cadence=95.0,
+        wheel_circumference_m=2.12, max_descent_kmh=75.0
+    )
+    
+    # Mild descent (-3.5%) with 300W pedaling
+    v_fast_gear = opt_46_10._solve_velocity(target_watt=300, slope_pct=-3.5)
+    v_slow_gear = opt_46_11._solve_velocity(target_watt=300, slope_pct=-3.5)
+    
+    assert v_fast_gear > v_slow_gear
+    # The slow gear must be capped near its spin-out speed (~50.6 km/h)
+    assert v_slow_gear * 3.6 <= 52.0
+
+
+def test_downhill_spin_out_zeros_target_power():
+    """Verify that on steep descents where coasting speed exceeds pedaling capability, target power is 0W."""
+    opt = AdvancedPacingOptimizer(
+        highest_gear_ratio=46.0 / 10.0, max_pedal_cadence=105.0,
+        cda=0.32, crr=0.0045, rider_weight=80.0, bike_weight=10.0
+    )
+    # On an 8% descent, 90kg will coast at >65 km/h, well beyond 46/10 pedaling range (61.4 km/h)
+    df_steep_desc = pd.DataFrame([{
+        'distance_km': 0.1, 'segment_len_m': 100.0, 'slope': -8.0,
+        'latitude': 50.0, 'longitude': 5.0, 'elevation': 92.0
+    }])
+    raw = opt.generate_raw_pacing_dataframe(df_steep_desc)
+    assert raw['target_power'].iloc[0] == 0
+
