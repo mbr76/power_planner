@@ -45,8 +45,8 @@ except ImportError:
 
 # App Version & Build Metadata
 APP_VERSION = "1.0.0"
-BUILD_NUMBER = "33"
-BUILD_TIMESTAMP = "2026-10-01 10:46:21"
+BUILD_NUMBER = "38"
+BUILD_TIMESTAMP = "2026-10-25 18:08:36"
 
 # Übersetzungs-Presets für Berggänge (kleinste Übersetzung) und Abfahrten (größte Übersetzung)
 GEAR_RATIOS_LOW = {
@@ -1076,7 +1076,7 @@ async def main(page: ft.Page):
     route_ele_badge = ft.Text(f"{int(state['calc']['pos_ele'])} hm" if state["calc"] and "pos_ele" in state["calc"] else "-", size=13, weight=ft.FontWeight.BOLD, color=ft.Colors.LIGHT_BLUE_400)
     route_name_badge = ft.Text(os.path.basename(state['gpx_path']), size=13, weight=ft.FontWeight.BOLD, no_wrap=True)
 
-    def make_kpi_card(icon, label, value_control, color, col_span={"xs": 6, "sm": 4, "md": 2}):
+    def make_kpi_card(icon, label, value_control, color, tooltip=None, col_span={"xs": 6, "sm": 4, "md": 2}):
         return ft.Container(
             content=ft.Column([
                 ft.Row([
@@ -1086,14 +1086,16 @@ async def main(page: ft.Page):
                         padding=3,
                         border_radius=6,
                     ),
-                    ft.Text(label, size=11, color=ft.Colors.GREY_300, weight=ft.FontWeight.W_500, expand=True, no_wrap=False)
+                    ft.Text(label, size=11, color=ft.Colors.GREY_300, weight=ft.FontWeight.W_500, expand=True, no_wrap=True, overflow=ft.TextOverflow.ELLIPSIS)
                 ], spacing=5, vertical_alignment=ft.CrossAxisAlignment.CENTER),
                 value_control
-            ], spacing=2),
+            ], spacing=2, alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+            height=68,
             padding=ft.Padding.symmetric(horizontal=10, vertical=8),
             border_radius=14,
             bgcolor=ft.Colors.with_opacity(0.10, color) if page.theme_mode == ft.ThemeMode.DARK else ft.Colors.with_opacity(0.05, color),
             border=ft.Border.all(1, ft.Colors.with_opacity(0.22, color) if page.theme_mode == ft.ThemeMode.DARK else ft.Colors.with_opacity(0.12, color)),
+            tooltip=tooltip,
             col=col_span,
         )
 
@@ -1109,12 +1111,12 @@ async def main(page: ft.Page):
                 ft.Text("Übersicht & Leistungs-KPIs", size=15, weight=ft.FontWeight.BOLD, expand=True),
             ], spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER),
             ft.ResponsiveRow([
-                make_kpi_card(ft.Icons.TIMER_OUTLINED, "Dauer (Prognose)", ctrls["time"], ft.Colors.AMBER_400),
-                make_kpi_card(ft.Icons.FITNESS_CENTER_OUTLINED, "Systemgewicht", ctrls["weight"], ft.Colors.BLUE_400),
-                make_kpi_card(ft.Icons.SPEED, "Relative FTP", ctrls["rel_ftp"], ft.Colors.GREEN_400),
-                make_kpi_card(ft.Icons.BOLT, "ø Leistung", ctrls["avg_power"], ft.Colors.LIGHT_BLUE_400),
-                make_kpi_card(ft.Icons.SHOW_CHART, "Normalisierte Leistung", ctrls["np"], ft.Colors.ORANGE_400),
-                make_kpi_card(ft.Icons.LANDSCAPE, "Gesamtanstieg", ctrls["ele"], ft.Colors.PURPLE_400),
+                make_kpi_card(ft.Icons.TIMER_OUTLINED, "Dauer", ctrls["time"], ft.Colors.AMBER_400, tooltip="Prognostizierte Gesamtfahrzeit"),
+                make_kpi_card(ft.Icons.FITNESS_CENTER_OUTLINED, "Systemgewicht", ctrls["weight"], ft.Colors.BLUE_400, tooltip="Gesamtgewicht: Fahrer + Fahrrad + Ausrüstung"),
+                make_kpi_card(ft.Icons.SPEED, "Rel. FTP", ctrls["rel_ftp"], ft.Colors.GREEN_400, tooltip="Relative Schwellenleistung (W/kg)"),
+                make_kpi_card(ft.Icons.BOLT, "Ø Leistung", ctrls["avg_power"], ft.Colors.LIGHT_BLUE_400, tooltip="Durchschnittliche Zielleistung (Watt)"),
+                make_kpi_card(ft.Icons.SHOW_CHART, "NP (Coggan)", ctrls["np"], ft.Colors.ORANGE_400, tooltip="Coggan Normalized Power (30s gleitendes 4.-Potenz-Mittel)"),
+                make_kpi_card(ft.Icons.LANDSCAPE, "Gesamtanstieg", ctrls["ele"], ft.Colors.PURPLE_400, tooltip="Kumulierte positive Höhenmeter"),
             ], spacing=8, run_spacing=8),
         ], spacing=10)
 

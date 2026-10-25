@@ -227,11 +227,11 @@ def test_unified_kpi_overview_on_all_three_tabs():
         await ppf.main(page)
 
         expected_labels = [
-            "Dauer (Prognose)",
+            "Dauer",
             "Systemgewicht",
-            "Relative FTP",
-            "ø Leistung",
-            "Normalisierte Leistung",
+            "Rel. FTP",
+            "Ø Leistung",
+            "NP (Coggan)",
             "Gesamtanstieg"
         ]
 
@@ -255,6 +255,9 @@ def test_unified_kpi_overview_on_all_three_tabs():
             card_values = [c.content.controls[1].value for c in cards_row.controls]
             for v in card_values:
                 assert v != "-" and len(v) > 0
+            for c in cards_row.controls:
+                assert c.height == 68
+                assert c.tooltip is not None and len(c.tooltip) > 0
 
         # Check Tab 1
         check_tab_kpis(page.controls[0].content)
