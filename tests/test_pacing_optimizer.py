@@ -290,3 +290,62 @@ def test_downhill_spin_out_zeros_target_power():
     raw = opt.generate_raw_pacing_dataframe(df_steep_desc)
     assert raw['target_power'].iloc[0] == 0
 
+
+def test_altitude_hypoxia_and_air_density():
+    """Verify Bassett/Peronnet altitude hypoxia factor and barometric air density speed effect."""
+    opt = AdvancedPacingOptimizer(initial_ftp=300, target_factor=0.78)
+    # Below 1000m: no hypoxia penalty
+    assert opt.get_altitude_factor(500.0) == 1.0
+    assert opt.get_altitude_factor(1000.0) == 1.0
+    # At 2500m (Timmelsjoch / Kühtai / Giau): ~88-90% aerobic availability
+    alt_2500 = opt.get_altitude_factor(2500.0)
+    assert 0.86 <= alt_2500 <= 0.91
+
+    # At equal mechanical power (250W) on flat road, thinner air at 2500m yields higher velocity
+    v_sea = opt._solve_velocity(250, 0.0, elevation_m=200.0)
+    v_high = opt._solve_velocity(250, 0.0, elevation_m=2500.0)
+    assert v_high > v_sea
+
+
+def test_muscular_durability_and_marathon_climb_saturation(sample_gpx_path):
+    """Verify that on an Alpine marathon (Ötztaler), climb power is aerobically capped and effective FTP reflects altitude & kJ durability."""
+    if os.path.exists(sample_gpx_path):
+        opt = AdvancedPacingOptimizer(
+            initial_ftp=300, target_factor=0.75, rider_weight=80.0, bike_weight=12.0,
+            lowest_gear_ratio=33.0 / 36.0, min_climb_cadence=75.0
+        )
+        df_route = opt.parse_gpx(sample_gpx_path, auto_fetch_elevation=False)
+        df_raw = opt.generate_raw_pacing_dataframe(df_route)
+
+        assert 'effective_ftp_pct' in df_raw.columns
+        # Late in the race on high passes, effective FTP must be noticeably below 100%
+        assert df_raw['effective_ftp_pct'].min() < 90.0
+
+        # Average climb power (>5% slope) should be realistic (~225-260W for 300W FTP at 0.75 TF), not >285W
+        climbs = df_raw[df_raw['slope'] >= 5.0]
+        avg_climb_w = (climbs['target_power'] * climbs['duration_sec']).sum() / climbs['duration_sec'].sum()
+        assert 215.0 <= avg_climb_w <= 265.0
+
+
+def test_gut_absorption_ceiling_and_electrolyte_alerts(sample_gpx_path):
+    """Verify gut absorption decay over time/altitude and ELECTROLYTE_SOUP notifications after 3.5h."""
+    opt_overload = AdvancedPacingOptimizer(
+        initial_ftp=300, target_factor=0.80, carb_intake_per_hour=115
+    )
+    # Fresh at 500m: ~95 g/h ceiling; after 6h at 2200m: <75 g/h ceiling
+    assert opt_overload.get_max_carb_absorption(elapsed_hours=1.0, elevation_m=500.0) == pytest.approx(95.0)
+    late_high_abs = opt_overload.get_max_carb_absorption(elapsed_hours=6.5, elevation_m=2200.0)
+    assert late_high_abs < 75.0
+
+    if os.path.exists(sample_gpx_path):
+        df_route = opt_overload.parse_gpx(sample_gpx_path, auto_fetch_elevation=False)
+        df_raw = opt_overload.generate_raw_pacing_dataframe(df_route)
+
+        # Excessive carb intake (115 g/h) over an 8h marathon must accumulate gut_excess_g
+        assert df_raw['gut_excess_g'].max() > 50.0
+
+        # Must trigger ELECTROLYTE_SOUP reset alerts in the second half of the race
+        notifs = [n for n in df_raw['notification'] if isinstance(n, dict)]
+        soup_notifs = [n for n in notifs if n.get("type") == "ELECTROLYTE_SOUP"]
+        assert len(soup_notifs) >= 2
+

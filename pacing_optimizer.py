@@ -85,11 +85,34 @@ class AdvancedPacingOptimizer:
         self.elevation_source = "gpx"
         self.elevation_error = None
 
-    def _solve_velocity(self, target_watt, slope_pct):
+    def get_altitude_factor(self, elevation_m=0.0):
+        """
+        Berechnet den aeroben Leistungsfaktor unter Höhen-Hypoxie ab 1.000 m ü. NN.
+        (~ -6.0% bei 2.000 m, ~ -10.2% bei 2.500 m).
+        """
+        if elevation_m is None or math.isnan(elevation_m) or elevation_m <= 1000.0:
+            return 1.0
+        alt_loss = 0.060 * (((elevation_m - 1000.0) / 1000.0) ** 1.35)
+        return max(0.82, 1.0 - alt_loss)
+
+    def get_max_carb_absorption(self, elapsed_hours=0.0, elevation_m=500.0):
+        """
+        Physiologisches Darm-Absorptionslimit (g KH/h) via SGLT1/GLUT5.
+        Sinkt nach >3.5h Belastungsdauer sowie in großer Höhe (>1.500 m) durch reduzierte splanchnische Durchblutung.
+        """
+        base_gut_cap_g_h = 95.0
+        duration_gut_factor = max(0.70, 1.0 - 0.055 * max(0.0, elapsed_hours - 3.5))
+        ele_val = 0.0 if (elevation_m is None or math.isnan(elevation_m)) else float(elevation_m)
+        alt_gut_factor = max(0.80, 1.0 - 0.12 * max(0.0, (ele_val - 1500.0) / 1000.0))
+        return base_gut_cap_g_h * duration_gut_factor * alt_gut_factor
+
+    def _solve_velocity(self, target_watt, slope_pct, elevation_m=0.0):
         s = slope_pct / 100.0
         g = 9.81
         p_wheel = max(target_watt * (1.0 - self.loss_dt), 0.0)
         f_constant = (self.total_mass * g * s) + (self.total_mass * g * self.crr)
+        ele_val = 0.0 if (elevation_m is None or math.isnan(elevation_m)) else max(0.0, float(elevation_m))
+        rho_eff = self.rho * math.exp(-ele_val / 8500.0)
         
         # Maximale technische/sicherheitsrelevante Abfahrtsgeschwindigkeit
         v_max_mps = self.max_descent_kmh / 3.6
@@ -99,7 +122,7 @@ class AdvancedPacingOptimizer:
 
         # Freie Rollgeschwindigkeit ohne Treten (rein aus Hangabtrieb bei f_constant < 0)
         if f_constant < 0:
-            v_coast = math.sqrt(max(0.0, (-2.0 * f_constant) / (self.cda * self.rho)))
+            v_coast = math.sqrt(max(0.0, (-2.0 * f_constant) / (self.cda * rho_eff)))
         else:
             v_coast = 0.0
 
@@ -107,7 +130,7 @@ class AdvancedPacingOptimizer:
         low, high = 1.50, v_max_mps
         for _ in range(16):
             mid = (low + high) / 2.0
-            p_calc = (0.5 * self.cda * self.rho * (mid**3)) + (f_constant * mid)
+            p_calc = (0.5 * self.cda * rho_eff * (mid**3)) + (f_constant * mid)
             if p_calc > p_wheel:
                 high = mid  # Zu schnell für die getretene Leistung
             else:
@@ -451,23 +474,48 @@ class AdvancedPacingOptimizer:
         cumulative_time_sec = 0.0
         last_nutrition_time_sec = 0.0
         nutrition_interval_sec = 1200.0  # Alle 20 Minuten
+        nutrition_alert_count = 0
+        gut_excess_g = 0.0  # Unabsorbierte KH im Magen-Darm-Trakt (g)
         g = 9.81
+        
+        # Vorab-Berechnung der Gesamthöhenmeter für Ultra-Marathon-Skalierung:
+        # Unterscheidet kurze Anstiege/Etappenrennen (< 1.500 hm) von Alpin-Marathons (> 3.800 hm)
+        pos_ele_m = 0.0
+        if 'slope' in df_route.columns and 'segment_len_m' in df_route.columns:
+            pos_slopes = df_route['slope'].clip(lower=0.0) / 100.0
+            pos_ele_m = float((pos_slopes * df_route['segment_len_m']).sum())
+        ultra_scale = min(1.0, max(0.0, (pos_ele_m - 1500.0) / 2300.0))
         
         for idx, row in df_route.iterrows():
             slope = row['slope']
             dist_m = row['segment_len_m']
             s = slope / 100.0
+            ele_m = float(row['elevation']) if 'elevation' in row and not pd.isna(row['elevation']) else 500.0
             
+            # 1. Höhen-Hypoxie & Barometrische Luftdichte
+            alt_factor = self.get_altitude_factor(ele_m)
+            rho_eff = self.rho * math.exp(-max(0.0, ele_m) / 8500.0)
+            
+            # 2. Zwei-Komponenten-Ermüdung (Muskuläre kJ-Durability + Glykogen-Tank + GI-Distress)
             tank_emptiness_pct = 1.0 - (internal_glycogen_kcal / self.initial_glycogen_kcal) if self.initial_glycogen_kcal > 0 else 1.0
-            # Realistische physiologische Ermüdung bei fortschreitender Glykogenentleerung (max. 10% Abfall)
-            current_ftp = self.initial_ftp * (1.0 - (0.10 * (tank_emptiness_pct ** 2)))
+            # Muskuläre Ermüdung ab 1.800 kJ (ca. 2.8% pro 1.000 kJ darüber, kalibriert an Ötztaler & SuperGiroDolomiti)
+            muscular_fatigue = 0.028 * max(0.0, (total_burned_kcal - 1800.0) / 1000.0)
+            # Glykogen-Ermüdung inkl. Hungerast-Strafe unter 20% Füllstand
+            glycogen_fatigue = 0.08 * (tank_emptiness_pct ** 2)
+            if tank_emptiness_pct > 0.80:
+                glycogen_fatigue += 0.25 * ((tank_emptiness_pct - 0.80) / 0.20)
+            # Magen-Darm-Überlastung (GI-Stase wie beim Ötztaler 2024 am Timmelsjoch)
+            gi_penalty = min(0.18, 0.0025 * max(0.0, gut_excess_g - 50.0))
             
-            # 1. Neigungsabhängiges Pacing:
+            total_fatigue = min(0.35, muscular_fatigue + glycogen_fatigue + gi_penalty)
+            current_ftp = self.initial_ftp * alt_factor * max(0.65, 1.0 - total_fatigue)
+            
+            # 3. Neigungsabhängiges Pacing mit Tanh-Sättigung & Ultra-Marathon-Skalierung:
             if getattr(self, "pacing_mode", "dynamic") == "dynamic":
-                # Dynamisches / empirisch kalibriertes Pacing:
-                # - Flachland-Erholung (Zone 2, ~65-72% FTP bei 0%), verhindert unnötigen Körnerverschleiß
+                # Dynamisches / empirisch kalibriertes Pacing (10 Wettkämpfe):
+                # - Flachland-Erholung (Zone 2 im Marathon, bis 1.0x im kurzen Zeitfahren)
                 # - Kontinuierlicher Übergang ohne Phasensprung bei -1.5%
-                # - Progressiver Steigungsboost an Rampen
+                # - Sättigende Tanh-Steigungskurve (verhindert +40W Überschießen an langen Pässen)
                 if slope < -5.0:
                     base_factor = 0.0
                 elif slope < -1.5:
@@ -475,10 +523,15 @@ class AdvancedPacingOptimizer:
                     base_factor = ratio * (self.target_factor * 0.55)
                 elif slope <= 1.5:
                     flat_ratio = (slope - (-1.5)) / 3.0
-                    base_factor = self.target_factor * (0.55 + 0.45 * flat_ratio)
+                    # Bei kurzem All-Out / Zeitfahren (TF > 0.88) wird auch im Flachen voll gedrückt
+                    tt_bonus = max(0.0, (self.target_factor - 0.88) * 1.2)
+                    flat_mult = min(1.0, (0.55 + 0.45 * flat_ratio) + tt_bonus)
+                    base_factor = self.target_factor * flat_mult
                 else:
                     climb_slope = slope - 1.5
-                    slope_boost = 0.035 * climb_slope + 0.0025 * (climb_slope ** 1.5)
+                    # Auf kurzen Anstiegen bis +25% Boost über TF, bei Ultra-Marathons gedeckelt auf +13% über TF
+                    max_boost = 0.25 - (0.12 * ultra_scale)
+                    slope_boost = max_boost * math.tanh(climb_slope / 5.5)
                     base_factor = self.target_factor * (1.0 + slope_boost)
             else:
                 # Steady-Modus (Klassische Variante)
@@ -491,32 +544,42 @@ class AdvancedPacingOptimizer:
                     base_factor = self.target_factor * (1.0 + 0.02 * slope)
                 else:
                     climb_slope = slope - 1.5
-                    slope_boost = 0.035 * climb_slope + 0.0025 * (climb_slope ** 1.5)
+                    max_boost = 0.25 - (0.12 * ultra_scale)
+                    slope_boost = max_boost * math.tanh(climb_slope / 5.5)
                     base_factor = self.target_factor * (1.0 + slope_boost)
             
             target_watt = base_factor * current_ftp
             
-            # 2. Biomechanischer Kletter-Floor basierend auf kleinster Übersetzung & Mindestkadenz
-            # Verhindert Umfallen / Abwürgen im kleinsten Gang
+            # Aerober Marathon-Deckel für freiwilliges Pacing an langen Pässen (vor Kletter-Floor)
+            if slope > 1.5 and ultra_scale > 0.0:
+                marathon_cap = current_ftp * (1.12 - 0.18 * ultra_scale) * (self.target_factor / 0.78)
+                target_watt = min(target_watt, marathon_cap)
+            
+            # 4. Biomechanischer Kletter-Floor mit elastischer Mindestkadenz an Steilrampen (> 7.5%)
+            # Auf kurzen Rampen hält man die Kadenz höher (Floor ~63 rpm), bei langen Alpenpässen
+            # (Monte Zoncolan / Giau / Kühtai) sinkt die Kadenz bei > 10% natürlich auf bis zu 58 rpm ab.
             if slope >= 3.0:
-                v_min_climb = (self.min_climb_cadence / 60.0) * self.lowest_gear_ratio * self.wheel_circumference_m
+                cad_drop_rate = 1.0 + (1.2 * ultra_scale)
+                min_cad_floor = 63.0 - (5.0 * ultra_scale)
+                effective_min_cad = max(min_cad_floor, self.min_climb_cadence - cad_drop_rate * max(0.0, slope - 7.5))
+                v_min_climb = (effective_min_cad / 60.0) * self.lowest_gear_ratio * self.wheel_circumference_m
                 sin_theta = s / math.sqrt(1.0 + s**2)
                 f_gravity = self.total_mass * g * sin_theta
                 f_roll = self.total_mass * g * self.crr
                 p_min_crank = ((f_gravity + f_roll) * v_min_climb) / (1.0 - self.loss_dt)
                 target_watt = max(target_watt, p_min_crank)
 
-            # 3. Spin-Out Begrenzung bei Abfahrten:
+            # 5. Spin-Out Begrenzung bei Abfahrten (mit höhenkorrigierter Luftdichte rho_eff):
             # Wenn Hangabtrieb alleine bereits die Tretgrenze mit dem größten Gang erreicht,
             # wird nicht mehr getreten (0 W / Rollen lassen).
             v_max_pedal_mps = (self.max_pedal_cadence / 60.0) * self.highest_gear_ratio * self.wheel_circumference_m
             f_constant_check = (self.total_mass * g * s) + (self.total_mass * g * self.crr)
             if f_constant_check < 0:
-                v_coast_check = math.sqrt(max(0.0, (-2.0 * f_constant_check) / (self.cda * self.rho)))
+                v_coast_check = math.sqrt(max(0.0, (-2.0 * f_constant_check) / (self.cda * rho_eff)))
                 if v_coast_check >= (v_max_pedal_mps * 0.98):
                     target_watt = 0.0
 
-            # 4. W'-Begrenzung (anaerober Akku)
+            # 6. W'-Begrenzung (anaerober Akku)
             w_prime_pct = w_prime_current / self.w_prime_max if self.w_prime_max > 0 else 1.0
             if w_prime_pct > 0.30:
                 max_allowed_watt = current_ftp * 1.45
@@ -531,15 +594,23 @@ class AdvancedPacingOptimizer:
             else:
                 target_watt = int(round(target_watt / 5.0) * 5)
             
-            v_mps = self._solve_velocity(target_watt, slope)
+            v_mps = self._solve_velocity(target_watt, slope, elevation_m=ele_m)
             dt = dist_m / v_mps
             cumulative_time_sec += dt
+            elapsed_hours = cumulative_time_sec / 3600.0
             
-            # 4. Stoffwechsel-Crossover (Kohlenhydrate vs. Fettverbrennung)
+            # 7. Stoffwechsel-Crossover & Magen-Darm-Absorptionsdeckel (GI-Modell)
             p_ratio = target_watt / current_ftp if current_ftp > 0 else 1.0
             f_cho = min(1.0, max(0.15, p_ratio ** 2.2))
             
-            intake_kcal = (self.carb_intake_per_hour / 3600.0) * dt * 4.1
+            max_absorption_g_h = self.get_max_carb_absorption(elapsed_hours=elapsed_hours, elevation_m=ele_m)
+            absorbed_carbs_g_h = min(float(self.carb_intake_per_hour), max_absorption_g_h)
+            if self.carb_intake_per_hour > max_absorption_g_h:
+                gut_excess_g += (self.carb_intake_per_hour - max_absorption_g_h) * (dt / 3600.0)
+            else:
+                gut_excess_g = max(0.0, gut_excess_g - (max_absorption_g_h - self.carb_intake_per_hour) * 0.5 * (dt / 3600.0))
+            
+            intake_kcal = (absorbed_carbs_g_h / 3600.0) * dt * 4.1
             burned_kcal = (target_watt * dt) / 1000.0
             glycogen_burned_kcal = burned_kcal * f_cho
             total_burned_kcal += burned_kcal
@@ -552,30 +623,44 @@ class AdvancedPacingOptimizer:
                 w_prime_current += (current_ftp - target_watt) * dt * (1.0 - w_prime_pct)
             w_prime_current = max(0.0, min(w_prime_current, self.w_prime_max))
             
-            # Nutrition alert notification trigger (Alle 20 Minuten)
+            # 8. Phasenweise Verpflegungs- und Elektrolyt-/Brühe-Warnungen (Alle 20 Minuten)
             notification = None
             if (cumulative_time_sec - last_nutrition_time_sec) >= nutrition_interval_sec and idx > 0:
                 last_nutrition_time_sec = cumulative_time_sec
-                carb_amount = int(round((self.carb_intake_per_hour / 60.0) * 20))
-                notification = {
-                    "type": "NUTRITION",
-                    "trigger_radius_m": 50,
-                    "title": "Verpflegung",
-                    "message": f"Jetzt Gel/Riegel ({carb_amount}g KH) nehmen!",
-                    "audio_alert": True
-                }
+                nutrition_alert_count += 1
+                effective_target_g_h = min(int(self.carb_intake_per_hour), int(round(max_absorption_g_h)))
+                carb_amount = int(round((effective_target_g_h / 60.0) * 20))
+                
+                # Ab 3,5h Fahrzeit (oder hoher Magenbelastung) jede 3. Erinnerung als Salz/Brühe/Wasser-Reset
+                if elapsed_hours >= 3.5 and (nutrition_alert_count % 3 == 0 or gut_excess_g > 35.0):
+                    notification = {
+                        "type": "ELECTROLYTE_SOUP",
+                        "trigger_radius_m": 50,
+                        "title": "Magen-Reset & Salz",
+                        "message": f"GI-Schutz (>3.5h): Wasser/Elektrolyte oder warme Suppe/Brühe (Na+) statt süßem Gel! (Max. {effective_target_g_h}g KH/h)",
+                        "audio_alert": True
+                    }
+                else:
+                    notification = {
+                        "type": "NUTRITION",
+                        "trigger_radius_m": 50,
+                        "title": "Verpflegung",
+                        "message": f"Jetzt {carb_amount}g KH + Wasser nehmen! (Aufnahme-Limit aktuell ~{effective_target_g_h}g/h)",
+                        "audio_alert": True
+                    }
 
             zone_color = self._get_zone_color(target_watt)
             
             w_prime_percent = round((w_prime_current / self.w_prime_max) * 100.0, 1)
             glycogen_percent = round((internal_glycogen_kcal / self.initial_glycogen_kcal) * 100.0, 1) if self.initial_glycogen_kcal > 0 else 0.0
+            effective_ftp_percent = round((current_ftp / self.initial_ftp) * 100.0, 1) if self.initial_ftp > 0 else 100.0
             dist_km_val = round(row['distance_km'], 2)
             
             raw_points.append({
                 'index': idx,
                 'lat': round(row['latitude'], 5) if 'latitude' in row else 0.0,
                 'lon': round(row['longitude'], 5) if 'longitude' in row else 0.0,
-                'ele': round(row['elevation'], 1) if 'elevation' in row else 0.0,
+                'ele': round(ele_m, 1),
                 'dist_km': dist_km_val,
                 'distance_km': dist_km_val,
                 'target_power': target_watt,
@@ -583,6 +668,9 @@ class AdvancedPacingOptimizer:
                 'expected_w_prime_pct': w_prime_percent,
                 'w_prime_pct': w_prime_percent,
                 'glycogen_pct': glycogen_percent,
+                'effective_ftp_pct': effective_ftp_percent,
+                'gut_excess_g': round(gut_excess_g, 1),
+                'max_absorption_g_h': round(max_absorption_g_h, 1),
                 'internal_glycogen_kcal': round(internal_glycogen_kcal, 1),
                 'zone_color': zone_color,
                 'notification': notification,

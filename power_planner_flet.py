@@ -913,13 +913,15 @@ async def main(page: ft.Page):
 
         ax.plot(df_raw['distance_km'], df_raw['w_prime_pct'], color='#EF4444', linewidth=2.0, label="W'-Akku (Anaerob) %")
         ax.plot(df_raw['distance_km'], df_raw['glycogen_pct'], color='#10B981', linewidth=2.2, linestyle='--', label='Glykogentank (Metabolisch) %')
+        if 'effective_ftp_pct' in df_raw.columns:
+            ax.plot(df_raw['distance_km'], df_raw['effective_ftp_pct'], color='#A855F7', linewidth=1.8, linestyle='-.', label='Effektive FTP (Höhe & Ermüdung) %')
         
         ax.set_xlabel('Distanz (km)', color=text_color, fontsize=9, fontweight='bold')
         ax.set_ylabel('Speicher-Füllstand (%)', color=text_color, fontsize=9, fontweight='bold')
         ax.set_ylim(0, 105)
         ax.tick_params(colors=tick_color, labelsize=8)
         ax.grid(True, linestyle='--', alpha=0.25, color=grid_color)
-        ax.legend(facecolor=plot_bg, edgecolor=grid_color, labelcolor=text_color, loc='lower left', fontsize=9)
+        ax.legend(facecolor=plot_bg, edgecolor=grid_color, labelcolor=text_color, loc='lower left', fontsize=8.5)
 
         buf = io.BytesIO()
         plt.tight_layout()
@@ -972,6 +974,39 @@ async def main(page: ft.Page):
             pace_badge.border = ft.Border.all(1, ft.Colors.with_opacity(0.3, ft.Colors.RED))
 
     update_pace_badge()
+
+    # GI / Carbohydrate Absorption Feedback Badge
+    gi_badge_text = ft.Text(size=12, weight=ft.FontWeight.BOLD, text_align=ft.TextAlign.CENTER)
+    gi_badge_subtext = ft.Text(size=10, color=ft.Colors.GREY_400, text_align=ft.TextAlign.CENTER)
+    gi_badge = ft.Container(
+        content=ft.Column([
+            gi_badge_text,
+            gi_badge_subtext,
+        ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=2),
+        padding=ft.Padding.symmetric(horizontal=12, vertical=8),
+        border_radius=12,
+        alignment=ft.Alignment(0, 0),
+    )
+
+    def update_gi_badge():
+        carbs = int(state.get("carbs_per_hour", 90))
+        if carbs <= 80:
+            gi_badge_text.value = f"🟢 Magen-freundlich ({carbs} g/h)"
+            gi_badge_subtext.value = "Hohe Verträglichkeit auch nach >5h und im Hochgebirge (>2.000m)"
+            gi_badge.bgcolor = ft.Colors.with_opacity(0.15, ft.Colors.GREEN)
+            gi_badge.border = ft.Border.all(1, ft.Colors.with_opacity(0.3, ft.Colors.GREEN))
+        elif carbs <= 95:
+            gi_badge_text.value = f"🟡 Sportliches Limit ({carbs} g/h, 2:1 Glukose:Fruktose)"
+            gi_badge_subtext.value = "Ab 4h Fahrzeit & Hitze sinkt Darmaufnahme auf ~70–80 g/h – Wasser & Salz/Brühe einplanen!"
+            gi_badge.bgcolor = ft.Colors.with_opacity(0.15, ft.Colors.AMBER)
+            gi_badge.border = ft.Border.all(1, ft.Colors.with_opacity(0.3, ft.Colors.AMBER))
+        else:
+            gi_badge_text.value = f"🔴 Hohes GI-Distress-Risiko ({carbs} g/h)"
+            gi_badge_subtext.value = "Warnung: Übersteigt Darm-Absorption bei langen Pässen! Gefahr von Übelkeit/Magenstau – Suppe/Na+ ab 3,5h Pflicht"
+            gi_badge.bgcolor = ft.Colors.with_opacity(0.15, ft.Colors.RED)
+            gi_badge.border = ft.Border.all(1, ft.Colors.with_opacity(0.3, ft.Colors.RED))
+
+    update_gi_badge()
 
     # Gearing & Cadence Feedback Badge
     gearing_badge_climb_speed = ft.Text(size=12, weight=ft.FontWeight.BOLD, color=ft.Colors.PURPLE_200)
@@ -1199,6 +1234,7 @@ async def main(page: ft.Page):
                 state["charts_dirty"] = True
 
             update_pace_badge()
+            update_gi_badge()
             update_gearing_badge()
             route_status_chip_text.value = format_chip_route(state['gpx_path'])
             route_status_chip.tooltip = os.path.basename(state['gpx_path'])
@@ -1262,6 +1298,7 @@ async def main(page: ft.Page):
         val = int(float(e.data)) if e.data is not None else int(e.control.value)
         state["carbs_per_hour"] = val
         carbs_val_text.value = f"{val} g/h"
+        update_gi_badge()
         page.update()
 
     def on_carbs_change_end(e):
@@ -1653,6 +1690,7 @@ async def main(page: ft.Page):
                 make_slider_header(ft.Icons.SPEED, "Intensitätsfaktor (Target Factor)", target_f_val_text, ft.Colors.ORANGE_400),
                 target_f_slider,
                 pace_badge,
+                gi_badge,
             ]),
             padding=16,
             border_radius=16,
