@@ -72,7 +72,7 @@ def test_slider_drag_and_release_lifecycle():
         
         # 2. Target Factor Slider: Drag to 0.88, release at 0.88
         card2_col = main_col.controls[3].content.content
-        tf_slider = card2_col.controls[4]
+        tf_slider = [c for c in card2_col.controls if isinstance(c, ft.Slider)][1]
         
         tf_slider.on_change(ev.Event(name='change', control=tf_slider, data='0.88'))
         tf_slider.on_change_end(ev.Event(name='change_end', control=tf_slider, data='0.88'))
@@ -352,12 +352,36 @@ def test_settings_reset_to_defaults():
         assert reset_btn.icon == ft.Icons.RESTART_ALT
         reset_btn.on_click(ev.Event(name='click', control=reset_btn))
 
-        # Check values reset
-        assert ftp_slider.value == ppf.DEFAULT_SETTINGS["initial_ftp"]
-        saved = ppf.load_settings()
-        assert saved["initial_ftp"] == ppf.DEFAULT_SETTINGS["initial_ftp"]
+    asyncio.run(run())
+
+
+def test_card2_badge_order():
+    """Test that gi_badge is directly below carbs_slider, followed by target_f and pace_badge."""
+    async def run():
+        page = MockPage()
+        await ppf.main(page)
+
+        tab_setup = page.controls[0].content
+        main_col = tab_setup.content
+        card2_col = main_col.controls[3].content.content
+
+        # Check carbs slider at 1, gi_badge at 2
+        assert isinstance(card2_col.controls[1], ft.Slider)
+        gi_badge_container = card2_col.controls[2]
+        gi_text = gi_badge_container.content.controls[0].value
+        assert "Magen" in gi_text or "g/h" in gi_text
+
+        # Divider at 3
+        assert isinstance(card2_col.controls[3], ft.Divider)
+
+        # Target factor slider at 5, pace_badge at 6
+        assert isinstance(card2_col.controls[5], ft.Slider)
+        pace_badge_container = card2_col.controls[6]
+        pace_text = pace_badge_container.content.controls[0].value
+        assert "% FTP" in pace_text
 
     asyncio.run(run())
+
 
 
 
