@@ -26,6 +26,8 @@ import pandas as pd
 
 import flet as ft
 from pacing_optimizer import AdvancedPacingOptimizer
+from gpx_exporter import generate_gpx_from_pacing_track
+from hammerhead_client import HammerheadClient, BrowserAuthSession
 
 try:
     import zxingcpp
@@ -45,8 +47,8 @@ except ImportError:
 
 # App Version & Build Metadata
 APP_VERSION = "1.0.0"
-BUILD_NUMBER = "40"
-BUILD_TIMESTAMP = "2026-10-25 18:20:56"
+BUILD_NUMBER = "42"
+BUILD_TIMESTAMP = "2026-10-26 21:09:37"
 
 # Übersetzungs-Presets für Berggänge (kleinste Übersetzung) und Abfahrten (größte Übersetzung)
 GEAR_RATIOS_LOW = {
@@ -437,6 +439,11 @@ DEFAULT_SETTINGS = {
     "gpx_path": "oetztaler_route.gpx",
     "karoo_ip": "",
     "karoo_token": "",
+    "hh_token": "",
+    "hh_refresh_token": "",
+    "hh_user_id": "",
+    "hh_email": "",
+    "hh_auto_sync": True,
 }
 
 
@@ -517,6 +524,11 @@ def save_settings(state: dict) -> bool:
             "gpx_path": str(state.get("gpx_path", DEFAULT_SETTINGS["gpx_path"])),
             "karoo_ip": str(state.get("karoo_ip", "")),
             "karoo_token": str(state.get("karoo_token", "")),
+            "hh_token": str(state.get("hh_token", "")),
+            "hh_refresh_token": str(state.get("hh_refresh_token", "")),
+            "hh_user_id": str(state.get("hh_user_id", "")),
+            "hh_email": str(state.get("hh_email", "")),
+            "hh_auto_sync": bool(state.get("hh_auto_sync", True)),
         }
         with open(path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
@@ -563,6 +575,16 @@ def apply_settings(state: dict, saved: dict):
         state["karoo_ip"] = saved["karoo_ip"]
     if "karoo_token" in saved and isinstance(saved["karoo_token"], str):
         state["karoo_token"] = saved["karoo_token"]
+    if "hh_token" in saved and isinstance(saved["hh_token"], str):
+        state["hh_token"] = saved["hh_token"]
+    if "hh_refresh_token" in saved and isinstance(saved["hh_refresh_token"], str):
+        state["hh_refresh_token"] = saved["hh_refresh_token"]
+    if "hh_user_id" in saved and isinstance(saved["hh_user_id"], str):
+        state["hh_user_id"] = saved["hh_user_id"]
+    if "hh_email" in saved and isinstance(saved["hh_email"], str):
+        state["hh_email"] = saved["hh_email"]
+    if "hh_auto_sync" in saved and isinstance(saved["hh_auto_sync"], bool):
+        state["hh_auto_sync"] = saved["hh_auto_sync"]
 
 
 # ==========================================
@@ -1889,6 +1911,157 @@ async def main(page: ft.Page):
         log_box.value = "\n".join(state["logs"][-20:])
         page.update()
 
+    # ----------------------------------------------------
+    # HAMMERHEAD CLOUD SYNC & BROWSER LOGIN
+    # ----------------------------------------------------
+    hh_client = HammerheadClient(
+        token=state.get("hh_token") or None,
+        user_id=state.get("hh_user_id") or None,
+        refresh_token=state.get("hh_refresh_token") or None,
+    )
+    if hh_client.user_id and not state.get("hh_user_id"):
+        state["hh_user_id"] = hh_client.user_id
+
+    auth_session_holder = {"session": None}
+
+    hh_status_text = ft.Text("", size=12, weight=ft.FontWeight.W_600)
+    hh_status_icon = ft.Icon(ft.Icons.CLOUD_OFF, size=16, color=ft.Colors.GREY_400)
+    hh_logout_btn = ft.OutlinedButton(
+        "Abmelden",
+        icon=ft.Icons.LOGOUT,
+        visible=False,
+        style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10)),
+    )
+
+    def refresh_hh_auth_ui():
+        if hh_client.is_authenticated:
+            ident = state.get("hh_email") or f"User-ID: {hh_client.user_id}"
+            hh_status_text.value = f"Verbunden mit Hammerhead Cloud ({ident})"
+            hh_status_text.color = ft.Colors.GREEN_300
+            hh_status_icon.name = ft.Icons.CLOUD_DONE
+            hh_status_icon.color = ft.Colors.GREEN_400
+            hh_logout_btn.visible = True
+        else:
+            hh_status_text.value = "Nicht bei Hammerhead Cloud angemeldet"
+            hh_status_text.color = ft.Colors.GREY_400
+            hh_status_icon.name = ft.Icons.CLOUD_OFF
+            hh_status_icon.color = ft.Colors.GREY_400
+            hh_logout_btn.visible = False
+
+    refresh_hh_auth_ui()
+
+    def on_hh_auto_sync_change(e):
+        state["hh_auto_sync"] = bool(e.control.value)
+        save_settings(state)
+
+    hh_auto_sync_switch = ft.Switch(
+        label="Route (.gpx) nach erfolgreichem Karoo-Transfer automatisch an Hammerhead senden",
+        value=bool(state.get("hh_auto_sync", True)),
+        active_color=ft.Colors.AMBER_400,
+        on_change=on_hh_auto_sync_change,
+    )
+
+    async def on_hh_browser_login_click(_):
+        import webbrowser
+
+        old_sess = auth_session_holder.get("session")
+        if old_sess:
+            old_sess.stop()
+
+        loop = asyncio.get_running_loop()
+
+        def on_auth_completed(token: str, user_id: str, identifier: str, refresh_token: str = None):
+            def apply_on_main_thread():
+                hh_client.set_token(token, user_id, refresh_token=refresh_token)
+                state["hh_token"] = token
+                state["hh_refresh_token"] = refresh_token or ""
+                state["hh_user_id"] = user_id
+                state["hh_email"] = identifier
+                save_settings(state)
+                refresh_hh_auth_ui()
+                log_message(f"[{time.strftime('%H:%M:%S')}] ✅ Hammerhead Browser-Login erfolgreich ({identifier}, User-ID: {user_id}).")
+                show_snack(f"☁️ Mit Hammerhead Cloud verbunden ({identifier})!", bgcolor=ft.Colors.GREEN_700, icon=ft.Icons.CLOUD_DONE)
+                page.update()
+
+            loop.call_soon_threadsafe(apply_on_main_thread)
+
+        sess = BrowserAuthSession(
+            on_success=on_auth_completed,
+            clear_session=bool(state.get("hh_clear_webview_session", False)),
+        )
+        state["hh_clear_webview_session"] = False
+        auth_session_holder["session"] = sess
+        login_url = sess.start()
+
+        log_message(f"[{time.strftime('%H:%M:%S')}] 🌐 Öffne offizielles Hammerhead / SRAM Anmeldefenster (https://dashboard.hammerhead.io)...")
+        launched_native = await asyncio.to_thread(sess.launch_native_hammerhead_browser)
+        if not launched_native:
+            opened = False
+            try:
+                await page.launch_url(login_url)
+                opened = True
+            except Exception:
+                pass
+            if not opened:
+                try:
+                    webbrowser.open(login_url)
+                except Exception:
+                    pass
+        show_snack("🌐 Hammerhead / SRAM Anmeldefenster geöffnet.", bgcolor=ft.Colors.BLUE_700, icon=ft.Icons.OPEN_IN_BROWSER)
+
+    def on_hh_logout_click(_):
+        old_sess = auth_session_holder.get("session")
+        if old_sess:
+            old_sess.stop()
+            auth_session_holder["session"] = None
+        hh_client.clear_auth()
+        state["hh_token"] = ""
+        state["hh_refresh_token"] = ""
+        state["hh_user_id"] = ""
+        state["hh_email"] = ""
+        state["hh_clear_webview_session"] = True
+        save_settings(state)
+        refresh_hh_auth_ui()
+        log_message(f"[{time.strftime('%H:%M:%S')}] 🔒 Hammerhead Cloud-Verbindung getrennt.")
+        show_snack("Von Hammerhead Cloud abgemeldet.", bgcolor=ft.Colors.BLUE_GREY_800, icon=ft.Icons.LOGOUT)
+        page.update()
+
+    hh_logout_btn.on_click = on_hh_logout_click
+
+    async def do_push_gpx_to_hammerhead(json_str: str = None) -> bool:
+        if not state["calc"]:
+            show_snack("Keine Berechnungsdaten vorhanden.", bgcolor=ft.Colors.AMBER_700, icon=ft.Icons.WARNING_AMBER)
+            return False
+        if not hh_client.is_authenticated:
+            log_message(f"[{time.strftime('%H:%M:%S')}] ⚠️ Hammerhead GPX-Upload nicht möglich: Bitte zuerst über das Browserfenster anmelden.")
+            show_snack("Bitte zuerst bei Hammerhead im Browser anmelden.", bgcolor=ft.Colors.AMBER_700, icon=ft.Icons.LOGIN)
+            return False
+
+        try:
+            raw_json = json_str or get_karoo_json()
+            data = json.loads(raw_json)
+            meta = data.get("meta") or {}
+            track = data.get("track") or []
+            route_name = meta.get("route_name") or state["base_filename"]
+            gpx_str = generate_gpx_from_pacing_track(meta, track)
+
+            log_message(f"[{time.strftime('%H:%M:%S')}] ☁️ Sende Routendatei '{route_name}.gpx' an Hammerhead Cloud...")
+            await asyncio.to_thread(hh_client.upload_gpx, gpx_str, route_name)
+            if hh_client.token and hh_client.token != state.get("hh_token"):
+                state["hh_token"] = hh_client.token
+                state["hh_refresh_token"] = hh_client.refresh_token or ""
+                save_settings(state)
+            log_message(f"[{time.strftime('%H:%M:%S')}] ✅ Hammerhead Cloud: Route '{route_name}.gpx' erfolgreich übertragen!")
+            show_snack(f"☁️ Route '{route_name}.gpx' an Hammerhead übertragen!", bgcolor=ft.Colors.GREEN_700, icon=ft.Icons.CLOUD_DONE)
+            return True
+        except Exception as e:
+            log_message(f"[{time.strftime('%H:%M:%S')}] ❌ Hammerhead Cloud Upload-Fehler: {e}")
+            show_snack(f"❌ Hammerhead GPX-Upload fehlgeschlagen: {e}", bgcolor=ft.Colors.RED_700, icon=ft.Icons.CLOUD_OFF)
+            return False
+
+    async def on_hh_manual_upload_click(_):
+        await do_push_gpx_to_hammerhead()
+
     async def do_push_to_karoo(url):
         if not state["calc"]:
             show_snack("Keine Berechnungsdaten vorhanden.", bgcolor=ft.Colors.AMBER_700, icon=ft.Icons.WARNING_AMBER)
@@ -1906,6 +2079,12 @@ async def main(page: ft.Page):
             
         if success:
             show_snack(f"🎉 Erfolgreich auf Karoo übertragen ({filename})!", bgcolor=ft.Colors.GREEN_700, icon=ft.Icons.CHECK_CIRCLE)
+            if state.get("hh_auto_sync", True):
+                if hh_client.is_authenticated:
+                    log_message(f"[{time.strftime('%H:%M:%S')}] 🔄 Karoo-Transfer abgeschlossen — übermittle GPX-Route an Hammerhead...")
+                    await do_push_gpx_to_hammerhead(json_str)
+                else:
+                    log_message(f"[{time.strftime('%H:%M:%S')}] ℹ️ Hinweis: Automatischer Hammerhead-Routenupload ist aktiv, aber noch kein Konto angemeldet.")
         else:
             show_snack(f"❌ Übertragung fehlgeschlagen: {msg}", bgcolor=ft.Colors.RED_700, icon=ft.Icons.ERROR_OUTLINE)
 
@@ -1967,7 +2146,7 @@ async def main(page: ft.Page):
             show_snack("Bitte eine Karoo-URL eingeben.", bgcolor=ft.Colors.AMBER_700, icon=ft.Icons.WARNING_AMBER)
             log_message("⚠️ Bitte eine Karoo-URL eingeben.")
 
-    def on_adb_push_click(_):
+    async def on_adb_push_click(_):
         if not state["calc"]:
             return
         filename = f"{state['base_filename']}_power_track.json"
@@ -1977,6 +2156,9 @@ async def main(page: ft.Page):
         if success:
             log_message(f"✅ ADB Erfolg: {msg}")
             show_snack(f"✅ Per ADB nach /sdcard/PowerTracks/{filename} übertragen!", bgcolor=ft.Colors.GREEN_700, icon=ft.Icons.USB)
+            if state.get("hh_auto_sync", True) and hh_client.is_authenticated:
+                log_message(f"[{time.strftime('%H:%M:%S')}] 🔄 ADB-Transfer abgeschlossen — übermittle GPX-Route an Hammerhead...")
+                await do_push_gpx_to_hammerhead(json_str)
         else:
             log_message(f"❌ ADB Fehler: {msg}")
             show_snack(f"❌ ADB Fehler: {msg}", bgcolor=ft.Colors.RED_700, icon=ft.Icons.ERROR_OUTLINE)
@@ -2368,6 +2550,46 @@ async def main(page: ft.Page):
                         ft.Divider(height=6, color=ft.Colors.TRANSPARENT),
                         ft.Row([url_input]),
                         ft.OutlinedButton("Senden an URL", icon=ft.Icons.WIFI_TETHERING, on_click=on_send_url_click, style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10))),
+                    ], spacing=10),
+                    padding=16,
+                    border_radius=16,
+                ),
+                shape=ft.RoundedRectangleBorder(radius=16),
+            ),
+
+            # Hammerhead Cloud Route-Sync Card
+            ft.Card(
+                content=ft.Container(
+                    content=ft.Column([
+                        ft.Row([
+                            ft.Icon(ft.Icons.CLOUD_UPLOAD, size=18, color=ft.Colors.AMBER_400),
+                            ft.Text("Hammerhead Cloud Routen-Sync (.gpx)", size=14, weight=ft.FontWeight.BOLD, expand=True),
+                        ], spacing=8),
+                        ft.Container(
+                            content=ft.Row([
+                                hh_status_icon,
+                                hh_status_text,
+                            ], spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                            padding=ft.Padding.symmetric(horizontal=10, vertical=8),
+                            border_radius=10,
+                            bgcolor=ft.Colors.with_opacity(0.06, ft.Colors.WHITE),
+                        ),
+                        hh_auto_sync_switch,
+                        ft.Row([
+                            ft.FilledTonalButton(
+                                "🌐 Im Browser anmelden",
+                                icon=ft.Icons.OPEN_IN_BROWSER,
+                                on_click=on_hh_browser_login_click,
+                                style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10)),
+                            ),
+                            hh_logout_btn,
+                            ft.OutlinedButton(
+                                "☁️ Route jetzt senden",
+                                icon=ft.Icons.CLOUD_UPLOAD_OUTLINED,
+                                on_click=on_hh_manual_upload_click,
+                                style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10)),
+                            ),
+                        ], spacing=8, wrap=True),
                     ], spacing=10),
                     padding=16,
                     border_radius=16,

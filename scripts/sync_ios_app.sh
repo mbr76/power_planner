@@ -29,19 +29,23 @@ mkdir -p "$STAGING_APP"
 echo "📂 Kopiere aktuelle Python-Dateien..."
 cp "$PROJECT_ROOT/power_planner_flet.py" "$STAGING_APP/"
 cp "$PROJECT_ROOT/pacing_optimizer.py" "$STAGING_APP/"
+cp "$PROJECT_ROOT/gpx_exporter.py" "$STAGING_APP/"
+cp "$PROJECT_ROOT/hammerhead_client.py" "$STAGING_APP/"
 cp "$PROJECT_ROOT/main.py" "$STAGING_APP/"
 if [ -f "$PROJECT_ROOT/oetztaler_route.gpx" ]; then
     cp "$PROJECT_ROOT/oetztaler_route.gpx" "$STAGING_APP/"
 fi
 
 # 4. Synchronisiere in Serious Python SPM Resources (wird direkt in Runner.app gepackt)
-if [ -d "$SPM_APP" ]; then
+if [ -d "$SPM_APP" ] && [ -w "$SPM_APP" ]; then
     echo "🚀 Aktualisiere Serious Python SPM Resources/app..."
     # Alte .pyc entfernen
-    rm -f "$SPM_APP"/*.pyc "$SPM_APP"/power_planner_flet.* "$SPM_APP"/pacing_optimizer.* "$SPM_APP"/main.*
+    rm -f "$SPM_APP"/*.pyc "$SPM_APP"/power_planner_flet.* "$SPM_APP"/pacing_optimizer.* "$SPM_APP"/gpx_exporter.* "$SPM_APP"/hammerhead_client.* "$SPM_APP"/main.*
     
     cp "$PROJECT_ROOT/power_planner_flet.py" "$SPM_APP/"
     cp "$PROJECT_ROOT/pacing_optimizer.py" "$SPM_APP/"
+    cp "$PROJECT_ROOT/gpx_exporter.py" "$SPM_APP/"
+    cp "$PROJECT_ROOT/hammerhead_client.py" "$SPM_APP/"
     cp "$PROJECT_ROOT/main.py" "$SPM_APP/"
     if [ -f "$PROJECT_ROOT/oetztaler_route.gpx" ]; then
         cp "$PROJECT_ROOT/oetztaler_route.gpx" "$SPM_APP/"
