@@ -45,8 +45,8 @@ except ImportError:
 
 # App Version & Build Metadata
 APP_VERSION = "1.0.0"
-BUILD_NUMBER = "38"
-BUILD_TIMESTAMP = "2026-10-25 18:08:36"
+BUILD_NUMBER = "40"
+BUILD_TIMESTAMP = "2026-10-25 18:20:56"
 
 # Übersetzungs-Presets für Berggänge (kleinste Übersetzung) und Abfahrten (größte Übersetzung)
 GEAR_RATIOS_LOW = {
@@ -1687,12 +1687,12 @@ async def main(page: ft.Page):
             content=ft.Column([
                 make_slider_header(ft.Icons.RESTAURANT, "Kohlenhydrate (g/h)", carbs_val_text, ft.Colors.GREEN_400),
                 carbs_slider,
+                gi_badge,
 
                 ft.Divider(height=10, color=ft.Colors.TRANSPARENT),
                 make_slider_header(ft.Icons.SPEED, "Intensitätsfaktor (Target Factor)", target_f_val_text, ft.Colors.ORANGE_400),
                 target_f_slider,
                 pace_badge,
-                gi_badge,
             ]),
             padding=16,
             border_radius=16,
