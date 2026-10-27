@@ -510,43 +510,27 @@ class AdvancedPacingOptimizer:
             total_fatigue = min(0.35, muscular_fatigue + glycogen_fatigue + gi_penalty)
             current_ftp = self.initial_ftp * alt_factor * max(0.65, 1.0 - total_fatigue)
             
-            # 3. Neigungsabhängiges Pacing mit Tanh-Sättigung & Ultra-Marathon-Skalierung:
-            if getattr(self, "pacing_mode", "dynamic") == "dynamic":
-                # Dynamisches / empirisch kalibriertes Pacing (10 Wettkämpfe):
-                # - Flachland-Erholung (Zone 2 im Marathon, bis 1.0x im kurzen Zeitfahren)
-                # - Kontinuierlicher Übergang ohne Phasensprung bei -1.5%
-                # - Sättigende Tanh-Steigungskurve (verhindert +40W Überschießen an langen Pässen)
-                if slope < -5.0:
-                    base_factor = 0.0
-                elif slope < -1.5:
-                    ratio = (slope - (-5.0)) / 3.5
-                    base_factor = ratio * (self.target_factor * 0.55)
-                elif slope <= 1.5:
-                    flat_ratio = (slope - (-1.5)) / 3.0
-                    # Bei kurzem All-Out / Zeitfahren (TF > 0.88) wird auch im Flachen voll gedrückt
-                    tt_bonus = max(0.0, (self.target_factor - 0.88) * 1.2)
-                    flat_mult = min(1.0, (0.55 + 0.45 * flat_ratio) + tt_bonus)
-                    base_factor = self.target_factor * flat_mult
-                else:
-                    climb_slope = slope - 1.5
-                    # Auf kurzen Anstiegen bis +25% Boost über TF, bei Ultra-Marathons gedeckelt auf +13% über TF
-                    max_boost = 0.25 - (0.12 * ultra_scale)
-                    slope_boost = max_boost * math.tanh(climb_slope / 5.5)
-                    base_factor = self.target_factor * (1.0 + slope_boost)
+            # 3. Neigungsabhängiges Pacing mit Tanh-Sättigung & Ultra-Marathon-Skalierung (dynamisch / empirisch kalibriert):
+            # - Flachland-Erholung (Zone 2 im Marathon, bis 1.0x im kurzen Zeitfahren)
+            # - Kontinuierlicher Übergang ohne Phasensprung bei -1.5%
+            # - Sättigende Tanh-Steigungskurve (verhindert +40W Überschießen an langen Pässen)
+            if slope < -5.0:
+                base_factor = 0.0
+            elif slope < -1.5:
+                ratio = (slope - (-5.0)) / 3.5
+                base_factor = ratio * (self.target_factor * 0.55)
+            elif slope <= 1.5:
+                flat_ratio = (slope - (-1.5)) / 3.0
+                # Bei kurzem All-Out / Zeitfahren (TF > 0.88) wird auch im Flachen voll gedrückt
+                tt_bonus = max(0.0, (self.target_factor - 0.88) * 1.2)
+                flat_mult = min(1.0, (0.55 + 0.45 * flat_ratio) + tt_bonus)
+                base_factor = self.target_factor * flat_mult
             else:
-                # Steady-Modus (Klassische Variante)
-                if slope < -5.0:
-                    base_factor = 0.0
-                elif slope < -1.5:
-                    ratio = (slope - (-5.0)) / 3.5
-                    base_factor = ratio * (self.target_factor * 0.45)
-                elif slope <= 1.5:
-                    base_factor = self.target_factor * (1.0 + 0.02 * slope)
-                else:
-                    climb_slope = slope - 1.5
-                    max_boost = 0.25 - (0.12 * ultra_scale)
-                    slope_boost = max_boost * math.tanh(climb_slope / 5.5)
-                    base_factor = self.target_factor * (1.0 + slope_boost)
+                climb_slope = slope - 1.5
+                # Auf kurzen Anstiegen bis +25% Boost über TF, bei Ultra-Marathons gedeckelt auf +13% über TF
+                max_boost = 0.25 - (0.12 * ultra_scale)
+                slope_boost = max_boost * math.tanh(climb_slope / 5.5)
+                base_factor = self.target_factor * (1.0 + slope_boost)
             
             target_watt = base_factor * current_ftp
             

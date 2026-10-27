@@ -47,8 +47,8 @@ except ImportError:
 
 # App Version & Build Metadata
 APP_VERSION = "1.0.0"
-BUILD_NUMBER = "44"
-BUILD_TIMESTAMP = "2026-10-27 10:40:59"
+BUILD_NUMBER = "45"
+BUILD_TIMESTAMP = "2026-10-27 20:48:54"
 
 # Übersetzungs-Presets für Berggänge (kleinste Übersetzung) und Abfahrten (größte Übersetzung)
 GEAR_RATIOS_LOW = {
@@ -688,11 +688,10 @@ async def main(page: ft.Page):
                 "• Glykogenspeicher: Der 2.000 kcal Körpertank wird durch kontinuierliche Zufuhr geschützt, um den gefürchteten 'Hungerast' zu verhindern.\n"
                 "• Magenverträglichkeit (GI): Bei Werten über 90 g/h warnt das System vor Magen-Darm-Stress und erhöhtem Flüssigkeits-/Elektrolytbedarf."
             )),
-            ("⚙️ Schaltung, Kadenz & Pacing-Kurven", (
+            ("⚙️ Schaltung, Kadenz & Pacing", (
                 "• Berggang & Kletter-Kadenz: Verhindert zu schwere Gänge an Steilrampen; erzwingt im Notfall die nötige Watt-Mindestleistung.\n"
                 "• Abfahrtsgang & Spin-Out: Sobald bergab die Maximal-Kadenz überschritten wird, schaltet das Pacing auf 0 W (aerodynamischer Freilauf).\n"
-                "• Dynamisch: Kontinuierlich wattgesteuert und physiologisch optimiert.\n"
-                "• Klassisch Stufe: Feste 130 W Grundlast im Flachen und ab leichtem Gefälle (-1.5%)."
+                "• Physiologische Dynamik: Kontinuierliche Steigungsanpassung mit Flachland-Erholung (Z2) und Tanh-Sättigung am Berg."
             )),
             ("🗺️ Streckenprofil & Höhen-API", (
                 "• GPX-Import: Per Dateiauswahl, Projektordner oder GPX-XML Copy-Paste.\n"
@@ -1586,13 +1585,6 @@ async def main(page: ft.Page):
         update_gearing_badge()
         refresh_ui()
 
-    def on_pacing_mode_change(e):
-        val = getattr(e, "data", None) or getattr(e.control, "value", None)
-        if val in ("dynamic", "steady"):
-            state["pacing_mode"] = str(val)
-            pacing_mode_dropdown.value = val
-            refresh_ui()
-
     min_cadence_val_text = ft.Text(f"{int(state['min_climb_cadence'])} rpm", weight=ft.FontWeight.BOLD, size=14, color=ft.Colors.PURPLE_300)
     max_cadence_val_text = ft.Text(f"{int(state['max_pedal_cadence'])} rpm", weight=ft.FontWeight.BOLD, size=14, color=ft.Colors.DEEP_PURPLE_300)
 
@@ -1610,17 +1602,6 @@ async def main(page: ft.Page):
         value=state["highest_gear_key"],
         expand=True,
         on_select=on_highest_gear_change,
-    )
-
-    pacing_mode_dropdown = ft.Dropdown(
-        label="Pacing-Kurve / Berechnungsmodell",
-        options=[
-            ft.dropdown.Option(key="dynamic", text="📈 Dynamisch (kontinuierlich, Z2 im Flachen, wattgesteuert am Berg)"),
-            ft.dropdown.Option(key="steady", text="📊 Klassisch Stufe (Fix 130 W im Flachen ab -1.5%)"),
-        ],
-        value=state["pacing_mode"],
-        expand=True,
-        on_select=on_pacing_mode_change,
     )
 
     min_cadence_slider = ft.Slider(
@@ -1814,7 +1795,6 @@ async def main(page: ft.Page):
                 state[k] = DEFAULT_STRATEGY_SETTINGS[k]
         carbs_slider.value = state["carbs_per_hour"]
         target_f_slider.value = state["target_f"]
-        pacing_mode_dropdown.value = state["pacing_mode"]
         carbs_val_text.value = f"{state['carbs_per_hour']} g/h"
         target_f_val_text.value = f"{int(state['target_f'] * 100)} % FTP ({state['target_f']:.2f})"
         update_gi_badge()
@@ -2115,15 +2095,15 @@ async def main(page: ft.Page):
             border_radius=8,
             padding=6,
         ),
-        ft.Text("Pacing-Modell & Ernährungsstrategie", size=15, weight=ft.FontWeight.BOLD, expand=True),
+        ft.Text("Ernährungsstrategie & Intensität", size=15, weight=ft.FontWeight.BOLD, expand=True),
         ft.IconButton(
             icon=ft.Icons.INFO_OUTLINE,
             icon_size=16,
             icon_color=ft.Colors.GREY_400,
-            tooltip="Info zu Pacing & Ernährung",
+            tooltip="Info zu Ernährung & Intensität",
             on_click=lambda _: show_help_dialog(
-                "Pacing-Modell & Ernährungsstrategie",
-                "Steuert deine Zielleistung, das Berechnungsmodell und die stündliche Energieaufnahme. Der Glykogentank fasst ca. 2.000 kcal. Durch rechtzeitige Kohlenhydratzufuhr hältst du deine Leistungsfähigkeit bis zum letzten Berg stabil."
+                "Ernährungsstrategie & Intensität",
+                "Steuert deine Zielleistung und die stündliche Energieaufnahme. Der Glykogentank fasst ca. 2.000 kcal. Durch rechtzeitige Kohlenhydratzufuhr hältst du deine Leistungsfähigkeit bis zum letzten Berg stabil."
             ),
         ),
     ], spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER)
@@ -2131,8 +2111,6 @@ async def main(page: ft.Page):
     card2 = ft.Card(
         content=ft.Container(
             content=ft.Column([
-                pacing_mode_dropdown,
-                ft.Divider(height=8, color=ft.Colors.TRANSPARENT),
                 make_slider_header(
                     ft.Icons.RESTAURANT, "Kohlenhydrate (g/h)", carbs_val_text, ft.Colors.GREEN_400,
                     "Kohlenhydrate pro Stunde (g/h)",
@@ -2258,7 +2236,6 @@ async def main(page: ft.Page):
         "target_f_slider": target_f_slider,
         "lowest_gear_dropdown": lowest_gear_dropdown,
         "highest_gear_dropdown": highest_gear_dropdown,
-        "pacing_mode_dropdown": pacing_mode_dropdown,
         "min_cadence_slider": min_cadence_slider,
         "max_cadence_slider": max_cadence_slider,
         "rider_dialog": rider_dialog,

@@ -156,13 +156,8 @@ def test_steep_climbing_power_and_coasting():
         'latitude': 50.0, 'longitude': 5.0, 'elevation': 100.0
     }])
     raw_flat = opt.generate_raw_pacing_dataframe(df_flat)
-    # Dynamic mode saves energy on flats (Zone 2 cruising around 77% of target factor)
+    # Dynamic physiological pacing saves energy on flats (Zone 2 cruising around 77% of target factor)
     assert raw_flat['target_power'].iloc[0] == pytest.approx(opt.initial_ftp * opt.target_factor * 0.775, abs=15)
-    
-    # In steady mode, flat is strictly initial_ftp * target_factor
-    opt_steady = AdvancedPacingOptimizer(initial_ftp=300, target_factor=0.65, pacing_mode="steady")
-    raw_flat_steady = opt_steady.generate_raw_pacing_dataframe(df_flat)
-    assert raw_flat_steady['target_power'].iloc[0] == pytest.approx(opt_steady.initial_ftp * opt_steady.target_factor, abs=10)
 
 
 def test_short_steep_kicker_interval_isolation():

@@ -157,8 +157,8 @@ def test_ui_qr_camera_and_gpx_controls():
     asyncio.run(run())
 
 
-def test_gearing_and_pacing_mode_controls():
-    """Test gearing dropdowns, cadence sliders, and pacing mode selection in Flet UI."""
+def test_gearing_and_cadence_controls():
+    """Test gearing dropdowns, cadence sliders, and live speed badges in Flet UI."""
     async def run():
         page = MockPage()
         await ppf.main(page)
@@ -166,7 +166,6 @@ def test_gearing_and_pacing_mode_controls():
         tab_setup = page.controls[0].content
         test_ctrls = tab_setup.test_controls
         
-        pacing_dropdown = test_ctrls["pacing_mode_dropdown"]
         low_gear_dd = test_ctrls["lowest_gear_dropdown"]
         high_gear_dd = test_ctrls["highest_gear_dropdown"]
         min_cad_slider = test_ctrls["min_cadence_slider"]
@@ -181,7 +180,6 @@ def test_gearing_and_pacing_mode_controls():
         assert high_gear_dd.value == "46/10"
         assert min_cad_slider.value == 75.0
         assert max_cad_slider.value == 105.0
-        assert pacing_dropdown.value == "dynamic"
         
         # Change lowest gear to 30/34 (GRX subcompact)
         low_gear_dd.on_select(ev.Event(name='select', control=low_gear_dd, data='30/34'))
@@ -198,14 +196,6 @@ def test_gearing_and_pacing_mode_controls():
         # Change max cadence to 110 rpm
         max_cad_slider.on_change(ev.Event(name='change', control=max_cad_slider, data='110.0'))
         max_cad_slider.on_change_end(ev.Event(name='change_end', control=max_cad_slider, data='110.0'))
-        
-        # Switch pacing mode to steady
-        pacing_dropdown.on_select(ev.Event(name='select', control=pacing_dropdown, data='steady'))
-        assert pacing_dropdown.value == "steady"
-        
-        # Switch back to dynamic
-        pacing_dropdown.on_select(ev.Event(name='select', control=pacing_dropdown, data='dynamic'))
-        assert pacing_dropdown.value == "dynamic"
 
     asyncio.run(run())
 
@@ -380,7 +370,7 @@ def test_settings_reset_to_defaults():
 
 
 def test_card2_badge_order():
-    """Test that in card2, pacing_mode is followed by carbs + gi_badge, then target_f + pace_badge."""
+    """Test that in card2, carbs + gi_badge are followed by target_f + pace_badge."""
     async def run():
         page = MockPage()
         await ppf.main(page)
@@ -389,21 +379,18 @@ def test_card2_badge_order():
         main_col = tab_setup.content
         card2_col = main_col.controls[3].content.content
 
-        # Pacing mode dropdown at index 0
-        assert isinstance(card2_col.controls[0], ft.Dropdown)
-
-        # Check carbs slider at 3, gi_badge at 4
-        assert isinstance(card2_col.controls[3], ft.Slider)
-        gi_badge_container = card2_col.controls[4]
+        # Check carbs slider at 1, gi_badge at 2
+        assert isinstance(card2_col.controls[1], ft.Slider)
+        gi_badge_container = card2_col.controls[2]
         gi_text = gi_badge_container.content.controls[0].value
         assert "Magen" in gi_text or "g/h" in gi_text
 
-        # Divider at 5
-        assert isinstance(card2_col.controls[5], ft.Divider)
+        # Divider at 3
+        assert isinstance(card2_col.controls[3], ft.Divider)
 
-        # Target factor slider at 7, pace_badge at 8
-        assert isinstance(card2_col.controls[7], ft.Slider)
-        pace_badge_container = card2_col.controls[8]
+        # Target factor slider at 5, pace_badge at 6
+        assert isinstance(card2_col.controls[5], ft.Slider)
+        pace_badge_container = card2_col.controls[6]
         pace_text = pace_badge_container.content.controls[0].value
         assert "% FTP" in pace_text
 

@@ -43,9 +43,8 @@
 * **Abfahrtsgang (größte Übersetzung):** Dropdown (z. B. 46/10, 48/10, 50/11, 52/11, 54/11 etc.).
 * **Maximale Pedalier-Kadenz (Spin-Out):** Einstellbar von $90$ bis $125\,\text{rpm}$ (Standard: $105\,\text{rpm}$). Sobald die Abfahrtsgeschwindigkeit die Pedalierbarkeit übersteigt, schaltet das Pacing auf $0\,\text{W}$ (Freilauf/Rollen lassen).
 
-### 1.6 Pacing-Kurven-Modi
-* **📈 Dynamisch (kontinuierlich wattgesteuert):** Glatte, physikalisch stetige Leistungsanpassung. Im Flachen diszipliniertes GA1/Z2, an Anstiegen kraftsparend dosiertes Pacing, in Abfahrten Entlastung.
-* **📊 Klassisch Stufe:** Fixe $130\,\text{W}$ Grundlast im Flachen und ab leichten Gefällen ($-1{,}5\,\%$), orientiert an traditionellen Intervallvorgaben.
+### 1.6 Physiologisches Pacing-Modell
+* **📈 Dynamisch & kontinuierlich wattgesteuert:** Glatte, physikalisch stetige Leistungsanpassung. Im Flachen disziplinierte aerobe Erholung ($Z_2$), an Anstiegen kraftsparend dosiertes Pacing mit Tanh-Sättigung (verhindert Überschießen am Berg), in Abfahrten Freilaufabschaltung und aerodynamischer Freilauf. Das veraltete statische Modell („Klassisch Stufe“) wurde zugunsten maximaler Übersichtlichkeit und physiologischer Genauigkeit entfernt.
 
 ### 1.7 Streckendaten & Automatische Geländehöhen-API
 * **GPX-Parser:** Liest GPX-Dateien hochpräzise aus (Wegpunkte, Höhen, Distanzen, Glättung von GPS-Rauschen).
@@ -94,7 +93,7 @@
 * Übersteht App-Neustarts auf macOS, iOS, Android und im Web.
 * **Getrenntes Profil-Datenmodell:** Einstellungen sind strukturiert in Profilgruppen (`rider`, `bike`, `strategy`, `sync`) hinterlegt, um zukünftig Fahrer- und mehrere Fahrradprofile anlegen zu können.
 * **Unabhängige Preset-Resets:**
-  * **Tab 1 Header Reset:** Setzt ausschließlich Strategie-Einstellungen zurück (Kohlenhydrate, Target Factor, Pacing-Modus).
+  * **Tab 1 Header Reset:** Setzt ausschließlich Strategie-Einstellungen zurück (Kohlenhydrate, Target Factor).
   * **Fahrer-Dialog Reset:** Setzt ausschließlich Fahrerparameter zurück (FTP, W', Fahrergewicht).
   * **Rad-Dialog Reset:** Setzt ausschließlich Radparameter zurück (Radgewicht, Übersetzungen, Kadenzen).
 
@@ -116,7 +115,7 @@
   * **Routen-Chip (📍 <Name>):** Klick öffnet den modalen Streckenauswahl- und GPX-Import-Dialog direkt aus jeder App-Ansicht.
 * **Schlankes Tab 1 („Setup & Route“):**
   * Statt endloser Slider-Listen enthält Tab 1 zwei kompakte Profil-Vorschaukarten (`Fahrerprofil` und `Fahrrad & Schaltung`) mit direkten Werten und `Anpassen ↗`-Buttons.
-  * Pacing-Modell-Dropdown („Dynamisch“ vs. „Klassisch Stufe“) und Verpflegungsslider befinden sich in der Karte „Pacing-Modell & Ernährungsstrategie“.
+  * Karte „Ernährungsstrategie & Intensität“ fokussiert sich rein auf die beiden Kernregler für Kohlenhydrate und Target Factor (das frühere Pacing-Dropdown wurde zur Entschlackung der UI vollständig entfernt).
   * Streckenprofil-Karte mit Streckenkennzahlen und GPX-Import.
 
 ---
