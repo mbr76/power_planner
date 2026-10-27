@@ -482,6 +482,63 @@ def test_headline_chips_and_modal_dialogs():
     asyncio.run(run())
 
 
+def test_i18n_language_switching():
+    """Test switching languages between German and English updates UI labels and persists setting."""
+    async def run():
+        page = MockPage()
+        await ppf.main(page)
+
+        # 1. Verify default is German
+        assert page.navigation_bar.destinations[0].label == "Setup & Route"
+        assert page.navigation_bar.destinations[1].label == "Analyse & Charts"
+
+        tab_setup = page.controls[0].content
+        rider_dialog = tab_setup.test_controls["rider_dialog"]
+        assert rider_dialog.title.controls[1].value == "Fahrereinstellungen"
+        assert rider_dialog.actions[0].content == "Fahrer-Standardwerte"
+        assert rider_dialog.actions[1].content == "Fertig"
+
+        # Check Settings Dropdown in AppBar
+        actions = page.appbar.actions
+        settings_menu = actions[4]
+        assert isinstance(settings_menu, ft.PopupMenuButton)
+        assert len(settings_menu.items) == 4
+        # item 0: Theme toggle, item 2: DE (checked), item 3: EN (not checked)
+        de_item = settings_menu.items[2]
+        en_item = settings_menu.items[3]
+        assert de_item.checked is True
+        assert en_item.checked is False
+
+        # 2. Switch to English
+        en_item.on_click(ev.Event(name='click', control=en_item))
+
+        # Check that UI labels switched to English
+        assert page.navigation_bar.destinations[0].label == "Setup & Route"
+        assert page.navigation_bar.destinations[1].label == "Analysis & Charts"
+        assert rider_dialog.title.controls[1].value == "Rider Settings"
+        assert rider_dialog.actions[0].content == "Default Rider Settings"
+        assert rider_dialog.actions[1].content == "Done"
+
+        # Check Settings Dropdown reflects English
+        assert settings_menu.items[2].checked is False
+        assert settings_menu.items[3].checked is True
+
+        # Check persistence
+        saved = ppf.load_settings()
+        assert saved["language"] == "en"
+        assert saved["strategy"]["language"] == "en"
+
+        # 3. Switch back to German
+        de_item.on_click(ev.Event(name='click', control=de_item))
+        assert page.navigation_bar.destinations[1].label == "Analyse & Charts"
+        assert rider_dialog.title.controls[1].value == "Fahrereinstellungen"
+        saved = ppf.load_settings()
+        assert saved["language"] == "de"
+
+    asyncio.run(run())
+
+
+
 
 
 

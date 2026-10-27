@@ -113,10 +113,24 @@
   * **Fahrer-Chip (👤 <FTP> W):** Zeigt die aktuelle FTP. Klick öffnet den modalen Dialog für Fahrerparameter (Start-FTP, W'-Akku, Fahrergewicht).
   * **Fahrrad-Chip (🚴 <Gewicht> kg):** Zeigt das Radgewicht. Klick öffnet den modalen Dialog für Radspezifika (Radgewicht, Übersetzungen, Kadenzen, Gearing-Badge).
   * **Routen-Chip (📍 <Name>):** Klick öffnet den modalen Streckenauswahl- und GPX-Import-Dialog direkt aus jeder App-Ansicht.
+  * **Globaler Hilfe-Button (`HELP_OUTLINE`):** Vollständige interaktive Wissensdatenbank in der gewählten Sprache.
+  * **Zentrales Einstellungs-Dropdown (`SETTINGS_OUTLINE`):**
+    * Ersetzt das separate Theme-Icon durch ein standardisiertes Popup-Menü (`ft.PopupMenuButton`).
+    * **Farbschema:** Umschaltung zwischen Dark Mode und Light Mode.
+    * **Sprachauswahl:** Umschaltung zwischen Deutsch (`de`) und English (`en`) mit aktivem Häkchen-Indikator.
 * **Schlankes Tab 1 („Setup & Route“):**
   * Statt endloser Slider-Listen enthält Tab 1 zwei kompakte Profil-Vorschaukarten (`Fahrerprofil` und `Fahrrad & Schaltung`) mit direkten Werten und `Anpassen ↗`-Buttons.
   * Karte „Ernährungsstrategie & Intensität“ fokussiert sich rein auf die beiden Kernregler für Kohlenhydrate und Target Factor (das frühere Pacing-Dropdown wurde zur Entschlackung der UI vollständig entfernt).
   * Streckenprofil-Karte mit Streckenkennzahlen und GPX-Import.
+
+### 2.7 Internationalisierung & Mehrsprachigkeit (`i18n.py`)
+* **Vollständige Lokalisierung (Deutsch / Englisch):**
+  * Alle sichtbaren UI-Texte, Tab-Titel, Dialoge, Button-Labels, Coach-Badges, Verpflegungsempfehlungen, Fehler- und Statusmeldungen sind vollständig übersetzt.
+  * **Hilfe- und Dokumentationsdialoge:** Alle 6 Hauptthemenbereiche (Physik, W'-Akku, Ernährung, Gearing, Karoo-Sync, SRAM-Login) liegen zweisprachig vor.
+  * **Diagrammbeschriftungen:** Achsen, Legenden und Zonenbezeichner in Höhenprofil-, Strecken- und Energietank-Plots passen sich dynamisch der gewählten Sprache an.
+  * **Einkaufsliste:** Portionsbeschreibungen und Snacks („Gels“, „Riegel“, „Iso-Portionen“) passen sich der Sprache an.
+* **Laufzeit-Umschaltung ohne Neustart:** Beim Sprachwechsel über das Einstellungsmenü wird die UI sofort reaktiv aktualisiert.
+* **Persistenz & Systemerkennung:** Die gewählte Sprache wird in `power_planner_settings.json` gespeichert; bei Erststart wird automatisch die Systemsprache erkannt.
 
 ---
 
@@ -160,5 +174,5 @@ Bevor Änderungen eingecheckt werden, muss sichergestellt sein:
 1. **Keine Features entfernen:** Slider, Badges, Badges-Reihenfolge, Einkaufsliste, Charts und Tabs bleiben vollständig erhalten.
 2. **KPI-Karten-Konsistenz:** Die KPI-Leiste auf allen drei Tabs muss synchron bleiben und die gleichen sechs Felder enthalten.
 3. **Persistenz:** Neue Parameter müssen in `DEFAULT_SETTINGS`, `save_settings` und `apply_settings` registriert werden.
-4. **Testabdeckung:** Alle 47 Tests in `tests/` müssen fehlerfrei durchlaufen (`pytest tests/ -v`).
+4. **Testabdeckung:** Alle 48 Tests in `tests/` müssen fehlerfrei durchlaufen (`pytest tests/ -v`).
 5. **iOS-Sync:** Nach Änderungen an Python-Dateien muss `./scripts/sync_ios_app.sh` ausgeführt werden.
