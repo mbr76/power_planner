@@ -47,8 +47,8 @@ except ImportError:
 
 # App Version & Build Metadata
 APP_VERSION = "1.0.0"
-BUILD_NUMBER = "43"
-BUILD_TIMESTAMP = "2026-10-27 09:15:47"
+BUILD_NUMBER = "44"
+BUILD_TIMESTAMP = "2026-10-27 10:40:59"
 
 # Übersetzungs-Presets für Berggänge (kleinste Übersetzung) und Abfahrten (größte Übersetzung)
 GEAR_RATIOS_LOW = {
@@ -424,19 +424,28 @@ def get_available_gpx_files():
 # USER PREFERENCES & PERSISTENT STORAGE
 # ==========================================
 
-DEFAULT_SETTINGS = {
+DEFAULT_RIDER_SETTINGS = {
     "initial_ftp": 310,
     "w_prime": 20000,
     "rider_w": 76.0,
+}
+
+DEFAULT_BIKE_SETTINGS = {
     "bike_w": 8.0,
-    "carbs_per_hour": 90,
-    "target_f": 0.82,
     "lowest_gear_key": "33/34",
     "highest_gear_key": "46/10",
-    "pacing_mode": "dynamic",
     "min_climb_cadence": 75.0,
     "max_pedal_cadence": 105.0,
+}
+
+DEFAULT_STRATEGY_SETTINGS = {
+    "carbs_per_hour": 90,
+    "target_f": 0.82,
+    "pacing_mode": "dynamic",
     "gpx_path": "oetztaler_route.gpx",
+}
+
+DEFAULT_SYNC_SETTINGS = {
     "karoo_ip": "",
     "karoo_token": "",
     "hh_token": "",
@@ -444,6 +453,13 @@ DEFAULT_SETTINGS = {
     "hh_user_id": "",
     "hh_email": "",
     "hh_auto_sync": True,
+}
+
+DEFAULT_SETTINGS = {
+    **DEFAULT_RIDER_SETTINGS,
+    **DEFAULT_BIKE_SETTINGS,
+    **DEFAULT_STRATEGY_SETTINGS,
+    **DEFAULT_SYNC_SETTINGS,
 }
 
 
@@ -502,26 +518,32 @@ def load_settings() -> dict:
 
 
 def save_settings(state: dict) -> bool:
-    """Saves current sliders, dropdowns and settings into persistent storage."""
+    """Saves current sliders, dropdowns and settings into persistent storage, separated into profile groups."""
     path = get_settings_file_path()
     try:
         d = os.path.dirname(path)
         if d and not os.path.exists(d):
             os.makedirs(d, exist_ok=True)
 
-        data = {
-            "initial_ftp": int(state.get("initial_ftp", DEFAULT_SETTINGS["initial_ftp"])),
-            "w_prime": int(state.get("w_prime", DEFAULT_SETTINGS["w_prime"])),
-            "rider_w": round(float(state.get("rider_w", DEFAULT_SETTINGS["rider_w"])), 1),
-            "bike_w": round(float(state.get("bike_w", DEFAULT_SETTINGS["bike_w"])), 1),
-            "carbs_per_hour": int(state.get("carbs_per_hour", DEFAULT_SETTINGS["carbs_per_hour"])),
-            "target_f": round(float(state.get("target_f", DEFAULT_SETTINGS["target_f"])), 2),
-            "lowest_gear_key": str(state.get("lowest_gear_key", DEFAULT_SETTINGS["lowest_gear_key"])),
-            "highest_gear_key": str(state.get("highest_gear_key", DEFAULT_SETTINGS["highest_gear_key"])),
-            "pacing_mode": str(state.get("pacing_mode", DEFAULT_SETTINGS["pacing_mode"])),
-            "min_climb_cadence": round(float(state.get("min_climb_cadence", DEFAULT_SETTINGS["min_climb_cadence"])), 1),
-            "max_pedal_cadence": round(float(state.get("max_pedal_cadence", DEFAULT_SETTINGS["max_pedal_cadence"])), 1),
-            "gpx_path": str(state.get("gpx_path", DEFAULT_SETTINGS["gpx_path"])),
+        rider_data = {
+            "initial_ftp": int(state.get("initial_ftp", DEFAULT_RIDER_SETTINGS["initial_ftp"])),
+            "w_prime": int(state.get("w_prime", DEFAULT_RIDER_SETTINGS["w_prime"])),
+            "rider_w": round(float(state.get("rider_w", DEFAULT_RIDER_SETTINGS["rider_w"])), 1),
+        }
+        bike_data = {
+            "bike_w": round(float(state.get("bike_w", DEFAULT_BIKE_SETTINGS["bike_w"])), 1),
+            "lowest_gear_key": str(state.get("lowest_gear_key", DEFAULT_BIKE_SETTINGS["lowest_gear_key"])),
+            "highest_gear_key": str(state.get("highest_gear_key", DEFAULT_BIKE_SETTINGS["highest_gear_key"])),
+            "min_climb_cadence": round(float(state.get("min_climb_cadence", DEFAULT_BIKE_SETTINGS["min_climb_cadence"])), 1),
+            "max_pedal_cadence": round(float(state.get("max_pedal_cadence", DEFAULT_BIKE_SETTINGS["max_pedal_cadence"])), 1),
+        }
+        strategy_data = {
+            "carbs_per_hour": int(state.get("carbs_per_hour", DEFAULT_STRATEGY_SETTINGS["carbs_per_hour"])),
+            "target_f": round(float(state.get("target_f", DEFAULT_STRATEGY_SETTINGS["target_f"])), 2),
+            "pacing_mode": str(state.get("pacing_mode", DEFAULT_STRATEGY_SETTINGS["pacing_mode"])),
+            "gpx_path": str(state.get("gpx_path", DEFAULT_STRATEGY_SETTINGS["gpx_path"])),
+        }
+        sync_data = {
             "karoo_ip": str(state.get("karoo_ip", "")),
             "karoo_token": str(state.get("karoo_token", "")),
             "hh_token": str(state.get("hh_token", "")),
@@ -529,6 +551,19 @@ def save_settings(state: dict) -> bool:
             "hh_user_id": str(state.get("hh_user_id", "")),
             "hh_email": str(state.get("hh_email", "")),
             "hh_auto_sync": bool(state.get("hh_auto_sync", True)),
+        }
+
+        # Sowohl strukturierte Profilgruppen (für zukünftige Multi-Profile)
+        # als auch flache Keys für 100%ige Abwärtskompatibilität
+        data = {
+            "rider": rider_data,
+            "bike": bike_data,
+            "strategy": strategy_data,
+            "sync": sync_data,
+            **rider_data,
+            **bike_data,
+            **strategy_data,
+            **sync_data,
         }
         with open(path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
@@ -539,52 +574,62 @@ def save_settings(state: dict) -> bool:
 
 
 def apply_settings(state: dict, saved: dict):
-    """Safely updates state with loaded persistent values."""
+    """Safely updates state with loaded persistent values (supports grouped and flat formats)."""
     if not isinstance(saved, dict):
         return
-    if "initial_ftp" in saved and isinstance(saved["initial_ftp"], (int, float)) and 100 <= saved["initial_ftp"] <= 500:
-        state["initial_ftp"] = int(saved["initial_ftp"])
-    if "w_prime" in saved and isinstance(saved["w_prime"], (int, float)) and 10000 <= saved["w_prime"] <= 30000:
-        state["w_prime"] = int(saved["w_prime"])
-    if "rider_w" in saved and isinstance(saved["rider_w"], (int, float)) and 40.0 <= saved["rider_w"] <= 130.0:
-        state["rider_w"] = round(float(saved["rider_w"]), 1)
-    if "bike_w" in saved and isinstance(saved["bike_w"], (int, float)) and 5.0 <= saved["bike_w"] <= 20.0:
-        state["bike_w"] = round(float(saved["bike_w"]), 1)
-    if "carbs_per_hour" in saved and isinstance(saved["carbs_per_hour"], (int, float)) and 20 <= saved["carbs_per_hour"] <= 120:
-        state["carbs_per_hour"] = int(saved["carbs_per_hour"])
-    if "target_f" in saved and isinstance(saved["target_f"], (int, float)) and 0.60 <= saved["target_f"] <= 1.00:
-        state["target_f"] = round(float(saved["target_f"]), 2)
-    if "lowest_gear_key" in saved and saved["lowest_gear_key"] in GEAR_RATIOS_LOW:
-        state["lowest_gear_key"] = saved["lowest_gear_key"]
-        state["lowest_gear_ratio"] = GEAR_RATIOS_LOW[saved["lowest_gear_key"]][1]
-    if "highest_gear_key" in saved and saved["highest_gear_key"] in GEAR_RATIOS_HIGH:
-        state["highest_gear_key"] = saved["highest_gear_key"]
-        state["highest_gear_ratio"] = GEAR_RATIOS_HIGH[saved["highest_gear_key"]][1]
-    if "pacing_mode" in saved and saved["pacing_mode"] in ("dynamic", "steady"):
-        state["pacing_mode"] = saved["pacing_mode"]
-    if "min_climb_cadence" in saved and isinstance(saved["min_climb_cadence"], (int, float)) and 60.0 <= saved["min_climb_cadence"] <= 90.0:
-        state["min_climb_cadence"] = round(float(saved["min_climb_cadence"]), 1)
-    if "max_pedal_cadence" in saved and isinstance(saved["max_pedal_cadence"], (int, float)) and 90.0 <= saved["max_pedal_cadence"] <= 125.0:
-        state["max_pedal_cadence"] = round(float(saved["max_pedal_cadence"]), 1)
-    if "gpx_path" in saved and isinstance(saved["gpx_path"], str) and saved["gpx_path"]:
-        resolved = resolve_path(saved["gpx_path"])
+
+    # Extrahiere Gruppen falls vorhanden, sonst flach
+    rider_src = saved.get("rider") if isinstance(saved.get("rider"), dict) else saved
+    bike_src = saved.get("bike") if isinstance(saved.get("bike"), dict) else saved
+    strat_src = saved.get("strategy") if isinstance(saved.get("strategy"), dict) else saved
+    sync_src = saved.get("sync") if isinstance(saved.get("sync"), dict) else saved
+
+    if "initial_ftp" in rider_src and isinstance(rider_src["initial_ftp"], (int, float)) and 100 <= rider_src["initial_ftp"] <= 500:
+        state["initial_ftp"] = int(rider_src["initial_ftp"])
+    if "w_prime" in rider_src and isinstance(rider_src["w_prime"], (int, float)) and 10000 <= rider_src["w_prime"] <= 30000:
+        state["w_prime"] = int(rider_src["w_prime"])
+    if "rider_w" in rider_src and isinstance(rider_src["rider_w"], (int, float)) and 40.0 <= rider_src["rider_w"] <= 130.0:
+        state["rider_w"] = round(float(rider_src["rider_w"]), 1)
+
+    if "bike_w" in bike_src and isinstance(bike_src["bike_w"], (int, float)) and 5.0 <= bike_src["bike_w"] <= 20.0:
+        state["bike_w"] = round(float(bike_src["bike_w"]), 1)
+    if "lowest_gear_key" in bike_src and bike_src["lowest_gear_key"] in GEAR_RATIOS_LOW:
+        state["lowest_gear_key"] = bike_src["lowest_gear_key"]
+        state["lowest_gear_ratio"] = GEAR_RATIOS_LOW[bike_src["lowest_gear_key"]][1]
+    if "highest_gear_key" in bike_src and bike_src["highest_gear_key"] in GEAR_RATIOS_HIGH:
+        state["highest_gear_key"] = bike_src["highest_gear_key"]
+        state["highest_gear_ratio"] = GEAR_RATIOS_HIGH[bike_src["highest_gear_key"]][1]
+    if "min_climb_cadence" in bike_src and isinstance(bike_src["min_climb_cadence"], (int, float)) and 60.0 <= bike_src["min_climb_cadence"] <= 90.0:
+        state["min_climb_cadence"] = round(float(bike_src["min_climb_cadence"]), 1)
+    if "max_pedal_cadence" in bike_src and isinstance(bike_src["max_pedal_cadence"], (int, float)) and 90.0 <= bike_src["max_pedal_cadence"] <= 125.0:
+        state["max_pedal_cadence"] = round(float(bike_src["max_pedal_cadence"]), 1)
+
+    if "carbs_per_hour" in strat_src and isinstance(strat_src["carbs_per_hour"], (int, float)) and 20 <= strat_src["carbs_per_hour"] <= 120:
+        state["carbs_per_hour"] = int(strat_src["carbs_per_hour"])
+    if "target_f" in strat_src and isinstance(strat_src["target_f"], (int, float)) and 0.60 <= strat_src["target_f"] <= 1.00:
+        state["target_f"] = round(float(strat_src["target_f"]), 2)
+    if "pacing_mode" in strat_src and strat_src["pacing_mode"] in ("dynamic", "steady"):
+        state["pacing_mode"] = strat_src["pacing_mode"]
+    if "gpx_path" in strat_src and isinstance(strat_src["gpx_path"], str) and strat_src["gpx_path"]:
+        resolved = resolve_path(strat_src["gpx_path"])
         if resolved and os.path.exists(resolved):
-            state["gpx_path"] = saved["gpx_path"]
-            state["base_filename"] = os.path.splitext(os.path.basename(saved["gpx_path"]))[0]
-    if "karoo_ip" in saved and isinstance(saved["karoo_ip"], str):
-        state["karoo_ip"] = saved["karoo_ip"]
-    if "karoo_token" in saved and isinstance(saved["karoo_token"], str):
-        state["karoo_token"] = saved["karoo_token"]
-    if "hh_token" in saved and isinstance(saved["hh_token"], str):
-        state["hh_token"] = saved["hh_token"]
-    if "hh_refresh_token" in saved and isinstance(saved["hh_refresh_token"], str):
-        state["hh_refresh_token"] = saved["hh_refresh_token"]
-    if "hh_user_id" in saved and isinstance(saved["hh_user_id"], str):
-        state["hh_user_id"] = saved["hh_user_id"]
-    if "hh_email" in saved and isinstance(saved["hh_email"], str):
-        state["hh_email"] = saved["hh_email"]
-    if "hh_auto_sync" in saved and isinstance(saved["hh_auto_sync"], bool):
-        state["hh_auto_sync"] = saved["hh_auto_sync"]
+            state["gpx_path"] = strat_src["gpx_path"]
+            state["base_filename"] = os.path.splitext(os.path.basename(strat_src["gpx_path"]))[0]
+
+    if "karoo_ip" in sync_src and isinstance(sync_src["karoo_ip"], str):
+        state["karoo_ip"] = sync_src["karoo_ip"]
+    if "karoo_token" in sync_src and isinstance(sync_src["karoo_token"], str):
+        state["karoo_token"] = sync_src["karoo_token"]
+    if "hh_token" in sync_src and isinstance(sync_src["hh_token"], str):
+        state["hh_token"] = sync_src["hh_token"]
+    if "hh_refresh_token" in sync_src and isinstance(sync_src["hh_refresh_token"], str):
+        state["hh_refresh_token"] = sync_src["hh_refresh_token"]
+    if "hh_user_id" in sync_src and isinstance(sync_src["hh_user_id"], str):
+        state["hh_user_id"] = sync_src["hh_user_id"]
+    if "hh_email" in sync_src and isinstance(sync_src["hh_email"], str):
+        state["hh_email"] = sync_src["hh_email"]
+    if "hh_auto_sync" in sync_src and isinstance(sync_src["hh_auto_sync"], bool):
+        state["hh_auto_sync"] = sync_src["hh_auto_sync"]
 
 
 # ==========================================
@@ -1180,6 +1225,67 @@ async def main(page: ft.Page):
     route_ele_badge = ft.Text(f"{int(state['calc']['pos_ele'])} hm" if state["calc"] and "pos_ele" in state["calc"] else "-", size=13, weight=ft.FontWeight.BOLD, color=ft.Colors.LIGHT_BLUE_400)
     route_name_badge = ft.Text(os.path.basename(state['gpx_path']), size=13, weight=ft.FontWeight.BOLD, no_wrap=True)
 
+    # Headline Badges & Profile Summaries
+    rider_chip_text = ft.Text(f"{state['initial_ftp']} W", size=11, weight=ft.FontWeight.BOLD)
+    rider_chip = ft.Container(
+        content=ft.Row([
+            ft.Icon(ft.Icons.PERSON, size=14, color=ft.Colors.AMBER_400),
+            rider_chip_text,
+        ], spacing=4, alignment=ft.MainAxisAlignment.CENTER),
+        padding=ft.Padding.symmetric(horizontal=8, vertical=4),
+        border_radius=12,
+        bgcolor=ft.Colors.with_opacity(0.12, ft.Colors.AMBER),
+        border=ft.Border.all(1, ft.Colors.with_opacity(0.28, ft.Colors.AMBER)),
+        tooltip="Fahrereinstellungen: FTP, W' & Gewicht",
+        on_click=lambda _: open_rider_settings_dialog(),
+    )
+
+    bike_chip_text = ft.Text(f"{state['bike_w']:.1f} kg", size=11, weight=ft.FontWeight.BOLD)
+    bike_chip = ft.Container(
+        content=ft.Row([
+            ft.Icon(ft.Icons.DIRECTIONS_BIKE, size=14, color=ft.Colors.CYAN_400),
+            bike_chip_text,
+        ], spacing=4, alignment=ft.MainAxisAlignment.CENTER),
+        padding=ft.Padding.symmetric(horizontal=8, vertical=4),
+        border_radius=12,
+        bgcolor=ft.Colors.with_opacity(0.12, ft.Colors.CYAN),
+        border=ft.Border.all(1, ft.Colors.with_opacity(0.28, ft.Colors.CYAN)),
+        tooltip="Radspezifische Einstellungen: Gewicht, Schaltung & Trittfrequenz",
+        on_click=lambda _: open_bike_settings_dialog(),
+    )
+
+    route_status_chip_text = ft.Text(format_chip_route(state['gpx_path']), size=11, weight=ft.FontWeight.W_600)
+    route_status_chip = ft.Container(
+        content=ft.Row([
+            ft.Icon(ft.Icons.LOCATION_ON, size=13, color=ft.Colors.LIGHT_BLUE_400),
+            route_status_chip_text,
+        ], spacing=3, alignment=ft.MainAxisAlignment.CENTER),
+        padding=ft.Padding.symmetric(horizontal=8, vertical=4),
+        border_radius=12,
+        bgcolor=ft.Colors.with_opacity(0.12, ft.Colors.LIGHT_BLUE),
+        border=ft.Border.all(1, ft.Colors.with_opacity(0.28, ft.Colors.LIGHT_BLUE)),
+        tooltip="Streckenauswahl & GPX-Import öffnen",
+        on_click=lambda _: open_route_picker_dialog(),
+    )
+
+    rider_summary_text = ft.Text(f"{state['initial_ftp']} W · {state['rider_w']:.1f} kg", size=13, weight=ft.FontWeight.BOLD, color=ft.Colors.AMBER_400)
+    rel_w = state['initial_ftp'] / state['rider_w'] if state['rider_w'] > 0 else 0
+    rider_summary_subtext = ft.Text(f"W'-Akku: {state['w_prime']:,} J · Rel: {rel_w:.2f} W/kg", size=11, color=ft.Colors.GREY_400)
+
+    bike_summary_text = ft.Text(f"{state['bike_w']:.1f} kg · {state['lowest_gear_key']}–{state['highest_gear_key']}", size=13, weight=ft.FontWeight.BOLD, color=ft.Colors.CYAN_400)
+    bike_summary_subtext = ft.Text(f"Trittfrequenz: {int(state['min_climb_cadence'])}–{int(state['max_pedal_cadence'])} rpm", size=11, color=ft.Colors.GREY_400)
+
+    def update_profile_summaries():
+        rider_chip_text.value = f"{state['initial_ftp']} W"
+        bike_chip_text.value = f"{state['bike_w']:.1f} kg"
+        route_status_chip_text.value = format_chip_route(state['gpx_path'])
+        route_status_chip.tooltip = os.path.basename(state['gpx_path'])
+        rider_summary_text.value = f"{state['initial_ftp']} W · {state['rider_w']:.1f} kg"
+        rel_calc = state['initial_ftp'] / state['rider_w'] if state['rider_w'] > 0 else 0
+        rider_summary_subtext.value = f"W'-Akku: {state['w_prime']:,} J · Rel: {rel_calc:.2f} W/kg"
+        bike_summary_text.value = f"{state['bike_w']:.1f} kg · {state['lowest_gear_key']}–{state['highest_gear_key']}"
+        bike_summary_subtext.value = f"Trittfrequenz: {int(state['min_climb_cadence'])}–{int(state['max_pedal_cadence'])} rpm"
+
     def make_kpi_card(icon, label, value_control, color, tooltip=None, col_span={"xs": 6, "sm": 4, "md": 2}):
         return ft.Container(
             content=ft.Column([
@@ -1343,8 +1449,7 @@ async def main(page: ft.Page):
             update_gi_badge()
             update_gearing_badge()
             update_shopping_list()
-            route_status_chip_text.value = format_chip_route(state['gpx_path'])
-            route_status_chip.tooltip = os.path.basename(state['gpx_path'])
+            update_profile_summaries()
             save_settings(state)
             page.update()
         else:
@@ -1669,45 +1774,56 @@ async def main(page: ft.Page):
     carbs_slider = ft.Slider(min=20, max=120, divisions=20, value=state["carbs_per_hour"], active_color=ft.Colors.GREEN_400, on_change=on_carbs_change, on_change_end=on_carbs_change_end)
     target_f_slider = ft.Slider(min=0.60, max=1.00, divisions=40, value=state["target_f"], active_color=ft.Colors.ORANGE_400, on_change=on_target_f_change, on_change_end=on_target_f_change_end)
 
-    def on_reset_settings_click(_):
-        state["initial_ftp"] = DEFAULT_SETTINGS["initial_ftp"]
-        state["w_prime"] = DEFAULT_SETTINGS["w_prime"]
-        state["rider_w"] = DEFAULT_SETTINGS["rider_w"]
-        state["bike_w"] = DEFAULT_SETTINGS["bike_w"]
-        state["carbs_per_hour"] = DEFAULT_SETTINGS["carbs_per_hour"]
-        state["target_f"] = DEFAULT_SETTINGS["target_f"]
-        state["lowest_gear_key"] = DEFAULT_SETTINGS["lowest_gear_key"]
-        state["lowest_gear_ratio"] = GEAR_RATIOS_LOW[DEFAULT_SETTINGS["lowest_gear_key"]][1]
-        state["highest_gear_key"] = DEFAULT_SETTINGS["highest_gear_key"]
-        state["highest_gear_ratio"] = GEAR_RATIOS_HIGH[DEFAULT_SETTINGS["highest_gear_key"]][1]
-        state["pacing_mode"] = DEFAULT_SETTINGS["pacing_mode"]
-        state["min_climb_cadence"] = DEFAULT_SETTINGS["min_climb_cadence"]
-        state["max_pedal_cadence"] = DEFAULT_SETTINGS["max_pedal_cadence"]
-
+    # Independent Reset Handlers for each profile domain
+    def on_reset_rider_settings(_=None):
+        for k in DEFAULT_RIDER_SETTINGS:
+            state[k] = DEFAULT_RIDER_SETTINGS[k]
         ftp_slider.value = state["initial_ftp"]
         wprime_slider.value = state["w_prime"]
         rider_w_slider.value = state["rider_w"]
-        bike_w_slider.value = state["bike_w"]
-        carbs_slider.value = state["carbs_per_hour"]
-        target_f_slider.value = state["target_f"]
-        lowest_gear_dropdown.value = state["lowest_gear_key"]
-        highest_gear_dropdown.value = state["highest_gear_key"]
-        pacing_mode_dropdown.value = state["pacing_mode"]
-        min_cadence_slider.value = state["min_climb_cadence"]
-        max_cadence_slider.value = state["max_pedal_cadence"]
-
         ftp_val_text.value = f"{state['initial_ftp']} W"
         wprime_val_text.value = f"{state['w_prime']:,} J"
         rider_w_val_text.value = f"{state['rider_w']:.1f} kg"
-        bike_w_val_text.value = f"{state['bike_w']:.1f} kg"
-        carbs_val_text.value = f"{state['carbs_per_hour']} g/h"
-        target_f_val_text.value = f"{int(state['target_f'] * 100)} % FTP ({state['target_f']:.2f})"
-        min_cadence_val_text.value = f"{int(state['min_climb_cadence'])} rpm"
-        max_cadence_val_text.value = f"{int(state['max_pedal_cadence'])} rpm"
-
+        update_profile_summaries()
         save_settings(state)
         refresh_ui()
-        show_snack("Standardeinstellungen wiederhergestellt.", bgcolor=ft.Colors.BLUE_GREY_800, icon=ft.Icons.RESTORE)
+        show_snack("Fahrer-Standardwerte wiederhergestellt.", bgcolor=ft.Colors.BLUE_GREY_800, icon=ft.Icons.RESTORE)
+
+    def on_reset_bike_settings(_=None):
+        for k in DEFAULT_BIKE_SETTINGS:
+            state[k] = DEFAULT_BIKE_SETTINGS[k]
+        state["lowest_gear_ratio"] = GEAR_RATIOS_LOW[DEFAULT_BIKE_SETTINGS["lowest_gear_key"]][1]
+        state["highest_gear_ratio"] = GEAR_RATIOS_HIGH[DEFAULT_BIKE_SETTINGS["highest_gear_key"]][1]
+        bike_w_slider.value = state["bike_w"]
+        lowest_gear_dropdown.value = state["lowest_gear_key"]
+        highest_gear_dropdown.value = state["highest_gear_key"]
+        min_cadence_slider.value = state["min_climb_cadence"]
+        max_cadence_slider.value = state["max_pedal_cadence"]
+        bike_w_val_text.value = f"{state['bike_w']:.1f} kg"
+        min_cadence_val_text.value = f"{int(state['min_climb_cadence'])} rpm"
+        max_cadence_val_text.value = f"{int(state['max_pedal_cadence'])} rpm"
+        update_gearing_badge()
+        update_profile_summaries()
+        save_settings(state)
+        refresh_ui()
+        show_snack("Rad-Standardwerte wiederhergestellt.", bgcolor=ft.Colors.BLUE_GREY_800, icon=ft.Icons.RESTORE)
+
+    def on_reset_strategy_settings(_=None):
+        for k in DEFAULT_STRATEGY_SETTINGS:
+            if k != "gpx_path":
+                state[k] = DEFAULT_STRATEGY_SETTINGS[k]
+        carbs_slider.value = state["carbs_per_hour"]
+        target_f_slider.value = state["target_f"]
+        pacing_mode_dropdown.value = state["pacing_mode"]
+        carbs_val_text.value = f"{state['carbs_per_hour']} g/h"
+        target_f_val_text.value = f"{int(state['target_f'] * 100)} % FTP ({state['target_f']:.2f})"
+        update_gi_badge()
+        update_pace_badge()
+        save_settings(state)
+        refresh_ui()
+        show_snack("Strategie-Standardwerte wiederhergestellt.", bgcolor=ft.Colors.BLUE_GREY_800, icon=ft.Icons.RESTORE)
+
+    on_reset_settings_click = on_reset_strategy_settings
 
     hero_dashboard = ft.Container(
         content=ft.Column([
@@ -1720,13 +1836,13 @@ async def main(page: ft.Page):
                     border_radius=8,
                     padding=6,
                 ),
-                ft.Text("Fahrereinstellungen & Pacing", size=15, weight=ft.FontWeight.BOLD, expand=True),
+                ft.Text("Pacing- & Strategie-Setup", size=15, weight=ft.FontWeight.BOLD, expand=True),
                 ft.IconButton(
                     icon=ft.Icons.RESTART_ALT,
                     icon_size=18,
-                    tooltip="Standardwerte wiederherstellen",
+                    tooltip="Strategie-Standardwerte wiederherstellen",
                     icon_color=ft.Colors.GREY_400,
-                    on_click=on_reset_settings_click,
+                    on_click=on_reset_strategy_settings,
                 ),
                 ft.IconButton(
                     icon=ft.Icons.HELP_OUTLINE,
@@ -1768,7 +1884,75 @@ async def main(page: ft.Page):
             ]),
         ], spacing=4)
 
-    card1 = ft.Card(
+    # Compact Profile Summary Cards for Tab 1
+    card_rider_profile = ft.Card(
+        content=ft.Container(
+            content=ft.Column([
+                ft.Row([
+                    ft.Container(
+                        content=ft.Icon(ft.Icons.PERSON, size=15, color=ft.Colors.AMBER_400),
+                        bgcolor=ft.Colors.with_opacity(0.18, ft.Colors.AMBER),
+                        padding=4,
+                        border_radius=6,
+                    ),
+                    ft.Text("Fahrerprofil", size=13, weight=ft.FontWeight.BOLD, expand=True),
+                    ft.TextButton(
+                        "Anpassen ↗",
+                        icon=ft.Icons.TUNE,
+                        icon_color=ft.Colors.AMBER_400,
+                        on_click=lambda _: open_rider_settings_dialog(),
+                    ),
+                ], spacing=6, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                rider_summary_text,
+                rider_summary_subtext,
+            ], spacing=3),
+            padding=12,
+            border_radius=14,
+        ),
+        shape=ft.RoundedRectangleBorder(radius=14),
+        col={"xs": 12, "md": 6},
+    )
+
+    card_bike_profile = ft.Card(
+        content=ft.Container(
+            content=ft.Column([
+                ft.Row([
+                    ft.Container(
+                        content=ft.Icon(ft.Icons.DIRECTIONS_BIKE, size=15, color=ft.Colors.CYAN_400),
+                        bgcolor=ft.Colors.with_opacity(0.18, ft.Colors.CYAN),
+                        padding=4,
+                        border_radius=6,
+                    ),
+                    ft.Text("Fahrrad & Schaltung", size=13, weight=ft.FontWeight.BOLD, expand=True),
+                    ft.TextButton(
+                        "Anpassen ↗",
+                        icon=ft.Icons.TUNE,
+                        icon_color=ft.Colors.CYAN_400,
+                        on_click=lambda _: open_bike_settings_dialog(),
+                    ),
+                ], spacing=6, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                bike_summary_text,
+                bike_summary_subtext,
+            ], spacing=3),
+            padding=12,
+            border_radius=14,
+        ),
+        shape=ft.RoundedRectangleBorder(radius=14),
+        col={"xs": 12, "md": 6},
+    )
+
+    card_profiles_row = ft.ResponsiveRow([
+        card_rider_profile,
+        card_bike_profile,
+    ], spacing=10, run_spacing=10)
+
+    # Modal Dialogs for Rider, Bike & Route Settings
+    rider_dialog = ft.AlertDialog(
+        modal=False,
+        title=ft.Row([
+            ft.Icon(ft.Icons.PERSON, color=ft.Colors.AMBER_400, size=22),
+            ft.Text("Fahrereinstellungen", size=16, weight=ft.FontWeight.BOLD, expand=True),
+        ], spacing=10),
         content=ft.Container(
             content=ft.Column([
                 make_slider_header(
@@ -1777,7 +1961,6 @@ async def main(page: ft.Page):
                     "Die maximale Dauerleistung in Watt, die du theoretisch 60 Minuten lang konstant halten kannst. Bildet die 100%-Referenz für alle Trainingszonen und aeroben Berechnungen."
                 ),
                 ftp_slider,
-
                 ft.Divider(height=10, color=ft.Colors.TRANSPARENT),
                 make_slider_header(
                     ft.Icons.BATTERY_CHARGING_FULL, "W'-Kapazität (Akku)", wprime_val_text, ft.Colors.RED_400,
@@ -1785,32 +1968,145 @@ async def main(page: ft.Page):
                     "Dein anaerober Speicher in Joule. Jede Sekunde, in der du über deiner FTP fährst, leert diesen Tank. Fährst du unterhalb der FTP, lädt er sich wieder auf (typisch: 15.000 J für Einsteiger bis 25.000+ J für Sprinter/Profis)."
                 ),
                 wprime_slider,
-
                 ft.Divider(height=10, color=ft.Colors.TRANSPARENT),
-                ft.ResponsiveRow([
-                    ft.Column([
-                        make_slider_header(
-                            ft.Icons.PERSON, "Fahrergewicht", rider_w_val_text, ft.Colors.BLUE_400,
-                            "Fahrergewicht (kg)",
-                            "Dein reines Körpergewicht ohne Ausrüstung. Maßgeblich für die Steigungsleistung am Berg und die Berechnung des Leistungsgewichts (W/kg)."
-                        ),
-                        rider_w_slider,
-                    ], col={"xs": 12, "md": 6}),
-                    ft.Column([
-                        make_slider_header(
-                            ft.Icons.DIRECTIONS_BIKE, "Fahrrad & Ausrüstung", bike_w_val_text, ft.Colors.CYAN_400,
-                            "Fahrrad & Ausrüstung (kg)",
-                            "Das Gesamtgewicht deines Fahrrads inklusive gefüllter Trinkflaschen, Bekleidung, Helm, Schuhen, Werkzeug und Riegeln (meist ca. 8-10 kg)."
-                        ),
-                        bike_w_slider,
-                    ], col={"xs": 12, "md": 6}),
-                ]),
-            ]),
-            padding=16,
-            border_radius=16,
+                make_slider_header(
+                    ft.Icons.PERSON, "Fahrergewicht", rider_w_val_text, ft.Colors.BLUE_400,
+                    "Fahrergewicht (kg)",
+                    "Dein reines Körpergewicht ohne Ausrüstung. Maßgeblich für die Steigungsleistung am Berg und die Berechnung des Leistungsgewichts (W/kg)."
+                ),
+                rider_w_slider,
+            ], spacing=6, tight=True, scroll=ft.ScrollMode.AUTO),
+            width=440,
         ),
-        shape=ft.RoundedRectangleBorder(radius=16),
+        actions=[
+            ft.TextButton("Fahrer-Standardwerte", icon=ft.Icons.RESTART_ALT, on_click=on_reset_rider_settings),
+            ft.FilledButton("Fertig", on_click=lambda _: page.pop_dialog()),
+        ],
     )
+
+    bike_dialog = ft.AlertDialog(
+        modal=False,
+        title=ft.Row([
+            ft.Icon(ft.Icons.DIRECTIONS_BIKE, color=ft.Colors.CYAN_400, size=22),
+            ft.Text("Fahrrad & Schaltungseinstellungen", size=16, weight=ft.FontWeight.BOLD, expand=True),
+        ], spacing=10),
+        content=ft.Container(
+            content=ft.Column([
+                make_slider_header(
+                    ft.Icons.DIRECTIONS_BIKE, "Fahrrad & Ausrüstung", bike_w_val_text, ft.Colors.CYAN_400,
+                    "Fahrrad & Ausrüstung (kg)",
+                    "Das Gesamtgewicht deines Fahrrads inklusive Trinkflaschen, Bekleidung, Helm, Schuhen, Werkzeug und Riegeln."
+                ),
+                bike_w_slider,
+                ft.Divider(height=10, color=ft.Colors.TRANSPARENT),
+                lowest_gear_dropdown,
+                ft.Container(height=4),
+                make_slider_header(
+                    ft.Icons.ROTATE_RIGHT, "Minimale Kletter-Kadenz", min_cadence_val_text, ft.Colors.PURPLE_300,
+                    "Minimale Kletter-Kadenz (rpm)",
+                    "Deine angestrebte Mindest-Trittfrequenz an steilen Rampen. Verhindert unphysiologisch schweres Treten."
+                ),
+                min_cadence_slider,
+                ft.Divider(height=10, color=ft.Colors.TRANSPARENT),
+                highest_gear_dropdown,
+                ft.Container(height=4),
+                make_slider_header(
+                    ft.Icons.FAST_FORWARD, "Maximale Pedalier-Kadenz (Spin-Out)", max_cadence_val_text, ft.Colors.DEEP_PURPLE_300,
+                    "Maximale Pedalier-Kadenz (Spin-Out)",
+                    "Deine persönliche Grenze für schnelles Treten in Abfahrten. Sobald das Tempo im größten Gang diese Kadenz überschreitet, schaltet das Pacing auf 0 W."
+                ),
+                max_cadence_slider,
+                ft.Divider(height=8, color=ft.Colors.TRANSPARENT),
+                gearing_badge,
+            ], spacing=6, tight=True, scroll=ft.ScrollMode.AUTO),
+            width=460,
+        ),
+        actions=[
+            ft.TextButton("Rad-Standardwerte", icon=ft.Icons.RESTART_ALT, on_click=on_reset_bike_settings),
+            ft.FilledButton("Fertig", on_click=lambda _: page.pop_dialog()),
+        ],
+    )
+
+    route_dialog = ft.AlertDialog(
+        modal=False,
+        title=ft.Row([
+            ft.Icon(ft.Icons.MAP_OUTLINED, color=ft.Colors.LIGHT_BLUE_400, size=22),
+            ft.Text("Streckenauswahl & GPX-Import", size=16, weight=ft.FontWeight.BOLD, expand=True),
+        ], spacing=10),
+        content=ft.Container(
+            content=ft.Column([
+                ft.Container(
+                    content=ft.Column([
+                        ft.Row([
+                            ft.Icon(ft.Icons.LOCATION_ON, size=16, color=ft.Colors.LIGHT_BLUE_400),
+                            route_name_badge,
+                        ], spacing=6),
+                        ft.Row([
+                            ft.Container(
+                                content=ft.Row([
+                                    ft.Icon(ft.Icons.STRAIGHTEN, size=13, color=ft.Colors.AMBER_400),
+                                    route_dist_badge,
+                                ], spacing=4),
+                                bgcolor=ft.Colors.with_opacity(0.12, ft.Colors.AMBER),
+                                padding=ft.Padding.symmetric(horizontal=8, vertical=3),
+                                border_radius=8,
+                            ),
+                            ft.Container(
+                                content=ft.Row([
+                                    ft.Icon(ft.Icons.LANDSCAPE, size=13, color=ft.Colors.LIGHT_BLUE_400),
+                                    route_ele_badge,
+                                ], spacing=4),
+                                bgcolor=ft.Colors.with_opacity(0.12, ft.Colors.LIGHT_BLUE),
+                                padding=ft.Padding.symmetric(horizontal=8, vertical=3),
+                                border_radius=8,
+                            ),
+                        ], spacing=8),
+                    ], spacing=6),
+                    padding=10,
+                    border_radius=10,
+                    bgcolor=ft.Colors.with_opacity(0.06, ft.Colors.WHITE) if page.theme_mode == ft.ThemeMode.DARK else ft.Colors.with_opacity(0.04, ft.Colors.BLACK),
+                ),
+                ft.Divider(height=10, color=ft.Colors.TRANSPARENT),
+                ft.Text("GPX-Datei auswählen oder einfügen:", size=12, color=ft.Colors.GREY_400),
+                ft.Row([
+                    ft.FilledButton(
+                        "📁 Datei (.gpx)",
+                        icon=ft.Icons.UPLOAD_FILE,
+                        on_click=lambda e: (page.pop_dialog(), on_pick_gpx_click(e)),
+                        style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10)),
+                    ),
+                    ft.OutlinedButton(
+                        "📋 Code einfügen",
+                        icon=ft.Icons.PASTE,
+                        on_click=lambda e: (page.pop_dialog(), open_paste_dialog(e)),
+                        style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10)),
+                    ),
+                ], spacing=8, wrap=True),
+                ft.Divider(height=10, color=ft.Colors.TRANSPARENT) if available_gpx else ft.Container(),
+                ft.Column([
+                    ft.Text("Aus vorhandenen Strecken wählen:", size=12, color=ft.Colors.GREY_400),
+                    gpx_dropdown,
+                ], spacing=4) if available_gpx else ft.Container(),
+            ], spacing=8, tight=True, scroll=ft.ScrollMode.AUTO),
+            width=440,
+        ),
+        actions=[
+            ft.TextButton("Schließen", on_click=lambda _: page.pop_dialog()),
+        ],
+    )
+
+    def open_rider_settings_dialog(_=None):
+        page.show_dialog(rider_dialog)
+
+    def open_bike_settings_dialog(_=None):
+        page.show_dialog(bike_dialog)
+
+    def open_route_picker_dialog(_=None):
+        page.show_dialog(route_dialog)
+
+    # Backward-compatible references for tests
+    card1 = rider_dialog
+    card_gearing = bike_dialog
 
     section2_header = ft.Row([
         ft.Container(
@@ -1819,15 +2115,15 @@ async def main(page: ft.Page):
             border_radius=8,
             padding=6,
         ),
-        ft.Text("Ernährungsstrategie & Intensität", size=15, weight=ft.FontWeight.BOLD, expand=True),
+        ft.Text("Pacing-Modell & Ernährungsstrategie", size=15, weight=ft.FontWeight.BOLD, expand=True),
         ft.IconButton(
             icon=ft.Icons.INFO_OUTLINE,
             icon_size=16,
             icon_color=ft.Colors.GREY_400,
-            tooltip="Info zu Ernährung & Intensität",
+            tooltip="Info zu Pacing & Ernährung",
             on_click=lambda _: show_help_dialog(
-                "Ernährungsstrategie & Intensität",
-                "Steuert deine Zielleistung und Energieaufnahme. Der Glykogentank fasst ca. 2.000 kcal. Durch rechtzeitige Kohlenhydratzufuhr hältst du deine Leistungsfähigkeit bis zum letzten Berg stabil."
+                "Pacing-Modell & Ernährungsstrategie",
+                "Steuert deine Zielleistung, das Berechnungsmodell und die stündliche Energieaufnahme. Der Glykogentank fasst ca. 2.000 kcal. Durch rechtzeitige Kohlenhydratzufuhr hältst du deine Leistungsfähigkeit bis zum letzten Berg stabil."
             ),
         ),
     ], spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER)
@@ -1835,6 +2131,8 @@ async def main(page: ft.Page):
     card2 = ft.Card(
         content=ft.Container(
             content=ft.Column([
+                pacing_mode_dropdown,
+                ft.Divider(height=8, color=ft.Colors.TRANSPARENT),
                 make_slider_header(
                     ft.Icons.RESTAURANT, "Kohlenhydrate (g/h)", carbs_val_text, ft.Colors.GREEN_400,
                     "Kohlenhydrate pro Stunde (g/h)",
@@ -1852,62 +2150,6 @@ async def main(page: ft.Page):
                 target_f_slider,
                 pace_badge,
             ]),
-            padding=16,
-            border_radius=16,
-        ),
-        shape=ft.RoundedRectangleBorder(radius=16),
-    )
-
-    section_gearing_header = ft.Row([
-        ft.Container(
-            content=ft.Icon(ft.Icons.SETTINGS_INPUT_COMPONENT, size=16, color=ft.Colors.PURPLE_400),
-            bgcolor=ft.Colors.with_opacity(0.15, ft.Colors.PURPLE),
-            border_radius=8,
-            padding=6,
-        ),
-        ft.Text("Übersetzung, Trittfrequenz & Pacing-Kurve", size=15, weight=ft.FontWeight.BOLD, expand=True),
-        ft.IconButton(
-            icon=ft.Icons.INFO_OUTLINE,
-            icon_size=16,
-            icon_color=ft.Colors.GREY_400,
-            tooltip="Info zu Schaltung & Kadenz",
-            on_click=lambda _: show_help_dialog(
-                "Übersetzung, Trittfrequenz & Pacing-Kurve",
-                "Kombiniert deine Schaltung mit deiner persönlichen Biomechanik. Berechnet präzise, in welchen Streckenabschnitten du effektiv pedalieren kannst und wann aerodynamisches Rollen lassen Kraft spart."
-            ),
-        ),
-    ], spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER)
-
-    card_gearing = ft.Card(
-        content=ft.Container(
-            content=ft.Column([
-                pacing_mode_dropdown,
-                ft.Divider(height=10, color=ft.Colors.TRANSPARENT),
-                ft.ResponsiveRow([
-                    ft.Column([
-                        lowest_gear_dropdown,
-                        ft.Container(height=4),
-                        make_slider_header(
-                            ft.Icons.ROTATE_RIGHT, "Minimale Kletter-Kadenz", min_cadence_val_text, ft.Colors.PURPLE_300,
-                            "Minimale Kletter-Kadenz (rpm)",
-                            "Deine angestrebte Mindest-Trittfrequenz an steilen Rampen. Verhindert unphysiologisch schweres Stampfen. Fällt die Geschwindigkeit zu tief, errechnet das System die nötige Minimalleistung."
-                        ),
-                        min_cadence_slider,
-                    ], col={"xs": 12, "md": 6}),
-                    ft.Column([
-                        highest_gear_dropdown,
-                        ft.Container(height=4),
-                        make_slider_header(
-                            ft.Icons.FAST_FORWARD, "Maximale Pedalier-Kadenz (Spin-Out)", max_cadence_val_text, ft.Colors.DEEP_PURPLE_300,
-                            "Maximale Pedalier-Kadenz (Spin-Out)",
-                            "Deine persönliche Grenze für schnelles Pedalieren in Abfahrten. Sobald das Tempo im größten Gang diese Kadenz überschreitet, schaltet das Pacing auf 0 W (aerodynamischer Freilauf)."
-                        ),
-                        max_cadence_slider,
-                    ], col={"xs": 12, "md": 6}),
-                ]),
-                ft.Divider(height=6, color=ft.Colors.TRANSPARENT),
-                gearing_badge,
-            ], spacing=8),
             padding=16,
             border_radius=16,
         ),
@@ -1943,6 +2185,12 @@ async def main(page: ft.Page):
                         route_name_badge,
                         gpx_file_text,
                     ], spacing=2, expand=True),
+                    ft.FilledTonalButton(
+                        "Strecke wechseln",
+                        icon=ft.Icons.FOLDER_OPEN,
+                        on_click=lambda _: open_route_picker_dialog(),
+                        style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10)),
+                    ),
                 ], vertical_alignment=ft.CrossAxisAlignment.CENTER),
                 ft.Row([
                     ft.Container(
@@ -1981,7 +2229,7 @@ async def main(page: ft.Page):
                 ], wrap=True, spacing=8),
                 ft.Divider(height=10, color=ft.Colors.TRANSPARENT) if available_gpx else ft.Container(),
                 ft.Row([gpx_dropdown]) if available_gpx else ft.Container(),
-            ]),
+            ], spacing=10),
             padding=16,
             border_radius=16,
         ),
@@ -1991,17 +2239,35 @@ async def main(page: ft.Page):
     tab_setup_view = ft.Container(
         content=ft.Column([
             hero_dashboard,
-            card1,
+            card_profiles_row,
             section2_header,
             card2,
-            section_gearing_header,
-            card_gearing,
             section3_header,
             card3,
         ], spacing=16, scroll=ft.ScrollMode.AUTO, expand=True),
         padding=16,
         expand=True
     )
+
+    tab_setup_view.test_controls = {
+        "ftp_slider": ftp_slider,
+        "wprime_slider": wprime_slider,
+        "rider_w_slider": rider_w_slider,
+        "bike_w_slider": bike_w_slider,
+        "carbs_slider": carbs_slider,
+        "target_f_slider": target_f_slider,
+        "lowest_gear_dropdown": lowest_gear_dropdown,
+        "highest_gear_dropdown": highest_gear_dropdown,
+        "pacing_mode_dropdown": pacing_mode_dropdown,
+        "min_cadence_slider": min_cadence_slider,
+        "max_cadence_slider": max_cadence_slider,
+        "rider_dialog": rider_dialog,
+        "bike_dialog": bike_dialog,
+        "route_dialog": route_dialog,
+        "rider_chip": rider_chip,
+        "bike_chip": bike_chip,
+        "route_status_chip": route_status_chip,
+    }
 
     # ----------------------------------------------------
     # TAB 2: ANALYSE & CHARTS & SPORTNAHRUNG
@@ -2922,19 +3188,6 @@ async def main(page: ft.Page):
         on_click=toggle_theme
     )
 
-    route_status_chip_text = ft.Text(format_chip_route(state['gpx_path']), size=11, weight=ft.FontWeight.W_600)
-    route_status_chip = ft.Container(
-        content=ft.Row([
-            ft.Icon(ft.Icons.LOCATION_ON, size=13, color=ft.Colors.AMBER_400),
-            route_status_chip_text,
-        ], spacing=3, alignment=ft.MainAxisAlignment.CENTER),
-        padding=ft.Padding.symmetric(horizontal=8, vertical=4),
-        border_radius=12,
-        bgcolor=ft.Colors.with_opacity(0.12, ft.Colors.AMBER),
-        border=ft.Border.all(1, ft.Colors.with_opacity(0.28, ft.Colors.AMBER)),
-        tooltip=os.path.basename(state['gpx_path']),
-    )
-
     initial_tab = int(os.environ.get("POWER_PLANNER_TAB", "0"))
     if initial_tab == 1:
         img_elevation.src = render_elevation_chart()
@@ -2964,17 +3217,16 @@ async def main(page: ft.Page):
     )
 
     app_bar = ft.AppBar(
-        leading=ft.Icon(ft.Icons.DIRECTIONS_BIKE, color=ft.Colors.AMBER_400, size=26),
-        leading_width=36,
-        title=ft.Column([
-            ft.Text("Power-Planner", size=18, weight=ft.FontWeight.BOLD, no_wrap=True),
-            ft.Text("Pacing & Strategy", size=11, color=ft.Colors.GREY_400, no_wrap=True),
-        ], spacing=0),
+        leading=ft.Icon(ft.Icons.DIRECTIONS_BIKE, color=ft.Colors.AMBER_400, size=24),
+        leading_width=32,
+        title=ft.Text("Power-Planner", size=16, weight=ft.FontWeight.BOLD, no_wrap=True),
         actions=[
+            rider_chip,
+            bike_chip,
             route_status_chip,
             help_btn,
             theme_btn,
-            ft.Container(width=4)
+            ft.Container(width=4),
         ],
         bgcolor=ft.Colors.with_opacity(0.04, ft.Colors.WHITE) if page.theme_mode == ft.ThemeMode.DARK else ft.Colors.with_opacity(0.02, ft.Colors.BLACK),
     )

@@ -89,10 +89,14 @@
   6. `Gesamtanstieg` (z. B. `5.180 Hm`)
 * Bleibt beim Umschalten zwischen allen Tabs exakt identisch positioniert und formatiert.
 
-### 2.3 Persistente Speicherung der Einstellungen
+### 2.3 Persistente Speicherung & getrenntes Profil-Datenmodell
 * Speichert alle Slider-Werte, Dropdown-Auswahlen und Zugangsdaten automatisch in `power_planner_settings.json` im Plattform-Datenverzeichnis.
 * Übersteht App-Neustarts auf macOS, iOS, Android und im Web.
-* Mit dem **Reset-Button** (`RESTART_ALT`) können jederzeit die Standardwerte wiederhergestellt werden.
+* **Getrenntes Profil-Datenmodell:** Einstellungen sind strukturiert in Profilgruppen (`rider`, `bike`, `strategy`, `sync`) hinterlegt, um zukünftig Fahrer- und mehrere Fahrradprofile anlegen zu können.
+* **Unabhängige Preset-Resets:**
+  * **Tab 1 Header Reset:** Setzt ausschließlich Strategie-Einstellungen zurück (Kohlenhydrate, Target Factor, Pacing-Modus).
+  * **Fahrer-Dialog Reset:** Setzt ausschließlich Fahrerparameter zurück (FTP, W', Fahrergewicht).
+  * **Rad-Dialog Reset:** Setzt ausschließlich Radparameter zurück (Radgewicht, Übersetzungen, Kadenzen).
 
 ### 2.4 Reaktives Slider-Design (Zero Lag)
 * `on_change`: Aktualisiert sofort Live-Badges, Textwerte und Farbanzeigen (60 FPS flüssig).
@@ -103,6 +107,17 @@
   * Öffnet ein modales Fenster mit einer vollständigen Übersicht aller Funktionen, physikalischen Modelle, Zonen und Transferoptionen.
 * **Kontextuelle Hilfe-Icons (`INFO_OUTLINE`) an jedem Eingabefeld:**
   * An jedem Slider und Dropdown befindet sich ein Info-Icon mit Tooltip und Klick-Dialog für mobile Touchscreens.
+
+### 2.6 Headline-Badges, modale Dialoge & schlankes Tab 1
+* **Kompakte Headline (AppBar):**
+  * Schlanker Titel `Power-Planner` für optimale Platzausnutzung.
+  * **Fahrer-Chip (👤 <FTP> W):** Zeigt die aktuelle FTP. Klick öffnet den modalen Dialog für Fahrerparameter (Start-FTP, W'-Akku, Fahrergewicht).
+  * **Fahrrad-Chip (🚴 <Gewicht> kg):** Zeigt das Radgewicht. Klick öffnet den modalen Dialog für Radspezifika (Radgewicht, Übersetzungen, Kadenzen, Gearing-Badge).
+  * **Routen-Chip (📍 <Name>):** Klick öffnet den modalen Streckenauswahl- und GPX-Import-Dialog direkt aus jeder App-Ansicht.
+* **Schlankes Tab 1 („Setup & Route“):**
+  * Statt endloser Slider-Listen enthält Tab 1 zwei kompakte Profil-Vorschaukarten (`Fahrerprofil` und `Fahrrad & Schaltung`) mit direkten Werten und `Anpassen ↗`-Buttons.
+  * Pacing-Modell-Dropdown („Dynamisch“ vs. „Klassisch Stufe“) und Verpflegungsslider befinden sich in der Karte „Pacing-Modell & Ernährungsstrategie“.
+  * Streckenprofil-Karte mit Streckenkennzahlen und GPX-Import.
 
 ---
 
@@ -146,5 +161,5 @@ Bevor Änderungen eingecheckt werden, muss sichergestellt sein:
 1. **Keine Features entfernen:** Slider, Badges, Badges-Reihenfolge, Einkaufsliste, Charts und Tabs bleiben vollständig erhalten.
 2. **KPI-Karten-Konsistenz:** Die KPI-Leiste auf allen drei Tabs muss synchron bleiben und die gleichen sechs Felder enthalten.
 3. **Persistenz:** Neue Parameter müssen in `DEFAULT_SETTINGS`, `save_settings` und `apply_settings` registriert werden.
-4. **Testabdeckung:** Alle 45 Tests in `tests/` müssen fehlerfrei durchlaufen (`pytest tests/ -v`).
+4. **Testabdeckung:** Alle 47 Tests in `tests/` müssen fehlerfrei durchlaufen (`pytest tests/ -v`).
 5. **iOS-Sync:** Nach Änderungen an Python-Dateien muss `./scripts/sync_ios_app.sh` ausgeführt werden.

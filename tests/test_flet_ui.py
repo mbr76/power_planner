@@ -61,25 +61,21 @@ def test_slider_drag_and_release_lifecycle():
         await ppf.main(page)
         
         tab_setup = page.controls[0].content
-        main_col = tab_setup.content
+        test_ctrls = tab_setup.test_controls
         
         # 1. FTP Slider: Drag to 350, release at 350
-        card1_col = main_col.controls[1].content.content
-        ftp_slider = card1_col.controls[1]
-        
+        ftp_slider = test_ctrls["ftp_slider"]
         ftp_slider.on_change(ev.Event(name='change', control=ftp_slider, data='350.0'))
         ftp_slider.on_change_end(ev.Event(name='change_end', control=ftp_slider, data='350.0'))
+        assert test_ctrls["rider_chip"].content.controls[1].value == "350 W"
         
         # 2. Target Factor Slider: Drag to 0.88, release at 0.88
-        card2_col = main_col.controls[3].content.content
-        tf_slider = [c for c in card2_col.controls if isinstance(c, ft.Slider)][1]
-        
+        tf_slider = test_ctrls["target_f_slider"]
         tf_slider.on_change(ev.Event(name='change', control=tf_slider, data='0.88'))
         tf_slider.on_change_end(ev.Event(name='change_end', control=tf_slider, data='0.88'))
         
         # 3. Rider Weight Slider: Drag to 80.0
-        weights_row = card1_col.controls[6]
-        rider_w_slider = weights_row.controls[0].controls[1]
+        rider_w_slider = test_ctrls["rider_w_slider"]
         rider_w_slider.on_change(ev.Event(name='change', control=rider_w_slider, data='80.0'))
         rider_w_slider.on_change_end(ev.Event(name='change_end', control=rider_w_slider, data='80.0'))
 
@@ -168,22 +164,16 @@ def test_gearing_and_pacing_mode_controls():
         await ppf.main(page)
         
         tab_setup = page.controls[0].content
-        main_col = tab_setup.content
+        test_ctrls = tab_setup.test_controls
         
-        # Check gearing card is at index 5
-        card_gearing_col = main_col.controls[5].content.content
-        pacing_dropdown = card_gearing_col.controls[0]
-        resp_row = card_gearing_col.controls[2]
+        pacing_dropdown = test_ctrls["pacing_mode_dropdown"]
+        low_gear_dd = test_ctrls["lowest_gear_dropdown"]
+        high_gear_dd = test_ctrls["highest_gear_dropdown"]
+        min_cad_slider = test_ctrls["min_cadence_slider"]
+        max_cad_slider = test_ctrls["max_cadence_slider"]
         
-        climb_col = resp_row.controls[0]
-        low_gear_dd = climb_col.controls[0]
-        min_cad_slider = climb_col.controls[3]
-        
-        descent_col = resp_row.controls[1]
-        high_gear_dd = descent_col.controls[0]
-        max_cad_slider = descent_col.controls[3]
-        
-        gearing_badge = card_gearing_col.controls[4]
+        bike_dialog = test_ctrls["bike_dialog"]
+        gearing_badge = bike_dialog.content.content.controls[-1]
         assert gearing_badge is not None
         
         # Check defaults
@@ -283,31 +273,30 @@ def test_settings_persistence_save_and_reload():
         await ppf.main(page1)
 
         tab_setup = page1.controls[0].content
-        main_col = tab_setup.content
+        test_ctrls = tab_setup.test_controls
 
         # 1. Adjust FTP slider to 340
-        card1_col = main_col.controls[1].content.content
-        ftp_slider = card1_col.controls[1]
+        ftp_slider = test_ctrls["ftp_slider"]
         ftp_slider.on_change(ev.Event(name='change', control=ftp_slider, data='340.0'))
         ftp_slider.on_change_end(ev.Event(name='change_end', control=ftp_slider, data='340.0'))
 
         # 2. Adjust Rider Weight slider to 82.5
-        weights_row = card1_col.controls[6]
-        rider_w_slider = weights_row.controls[0].controls[1]
+        rider_w_slider = test_ctrls["rider_w_slider"]
         rider_w_slider.on_change(ev.Event(name='change', control=rider_w_slider, data='82.5'))
         rider_w_slider.on_change_end(ev.Event(name='change_end', control=rider_w_slider, data='82.5'))
 
         # 3. Adjust Lowest Gear dropdown to 30/34
-        card3_col = main_col.controls[5].content.content
-        resp_row = card3_col.controls[2]
-        low_gear_dd = resp_row.controls[0].controls[0]
+        low_gear_dd = test_ctrls["lowest_gear_dropdown"]
         low_gear_dd.on_select(ev.Event(name='select', control=low_gear_dd, data='30/34'))
 
-        # Check that settings were saved to file
+        # Check that settings were saved to file with both grouped and flat keys
         saved = ppf.load_settings()
         assert saved["initial_ftp"] == 340
         assert saved["rider_w"] == 82.5
         assert saved["lowest_gear_key"] == "30/34"
+        assert saved["rider"]["initial_ftp"] == 340
+        assert saved["rider"]["rider_w"] == 82.5
+        assert saved["bike"]["lowest_gear_key"] == "30/34"
 
         # Second session: new page bootstrap
         page2 = MockPage()
@@ -315,48 +304,83 @@ def test_settings_persistence_save_and_reload():
 
         # Verify that loaded state reflects saved values
         tab_setup2 = page2.controls[0].content
-        main_col2 = tab_setup2.content
-        card1_col2 = main_col2.controls[1].content.content
-        ftp_slider2 = card1_col2.controls[1]
-        rider_w_slider2 = card1_col2.controls[6].controls[0].controls[1]
-        low_gear_dd2 = main_col2.controls[5].content.content.controls[2].controls[0].controls[0]
+        test_ctrls2 = tab_setup2.test_controls
 
-        assert ftp_slider2.value == 340
-        assert rider_w_slider2.value == 82.5
-        assert low_gear_dd2.value == "30/34"
+        assert test_ctrls2["ftp_slider"].value == 340
+        assert test_ctrls2["rider_w_slider"].value == 82.5
+        assert test_ctrls2["lowest_gear_dropdown"].value == "30/34"
 
     asyncio.run(run())
 
 
 def test_settings_reset_to_defaults():
-    """Test that clicking the reset button resets all settings to defaults."""
+    """Test that independent resets only reset their respective domain."""
     async def run():
         page = MockPage()
         await ppf.main(page)
 
         tab_setup = page.controls[0].content
         main_col = tab_setup.content
+        test_ctrls = tab_setup.test_controls
 
-        # Change FTP
-        card1_col = main_col.controls[1].content.content
-        ftp_slider = card1_col.controls[1]
+        # 1. Modify Rider setting (FTP -> 380)
+        ftp_slider = test_ctrls["ftp_slider"]
         ftp_slider.on_change(ev.Event(name='change', control=ftp_slider, data='380.0'))
         ftp_slider.on_change_end(ev.Event(name='change_end', control=ftp_slider, data='380.0'))
 
-        assert ppf.load_settings()["initial_ftp"] == 380
+        # 2. Modify Bike setting (Bike Weight -> 11.5)
+        bike_w_slider = test_ctrls["bike_w_slider"]
+        bike_w_slider.on_change(ev.Event(name='change', control=bike_w_slider, data='11.5'))
+        bike_w_slider.on_change_end(ev.Event(name='change_end', control=bike_w_slider, data='11.5'))
 
-        # Click reset button in hero_dashboard header
+        # 3. Modify Strategy setting (Carbs -> 50)
+        carbs_slider = test_ctrls["carbs_slider"]
+        carbs_slider.on_change(ev.Event(name='change', control=carbs_slider, data='50.0'))
+        carbs_slider.on_change_end(ev.Event(name='change_end', control=carbs_slider, data='50.0'))
+
+        assert ppf.load_settings()["initial_ftp"] == 380
+        assert ppf.load_settings()["bike_w"] == 11.5
+        assert ppf.load_settings()["carbs_per_hour"] == 50
+
+        # Click reset button in hero_dashboard header (Tab 1 Strategy Reset)
         hero_dashboard = main_col.controls[0]
-        header_row = hero_dashboard.content.controls[2]  # Row with "Fahrereinstellungen & Pacing" and reset button
-        reset_btn = header_row.controls[2]  # ft.IconButton
-        assert reset_btn.icon == ft.Icons.RESTART_ALT
-        reset_btn.on_click(ev.Event(name='click', control=reset_btn))
+        header_row = hero_dashboard.content.controls[2]  # Row with "Pacing- & Strategie-Setup" and reset button
+        strategy_reset_btn = header_row.controls[2]  # ft.IconButton
+        assert strategy_reset_btn.icon == ft.Icons.RESTART_ALT
+        strategy_reset_btn.on_click(ev.Event(name='click', control=strategy_reset_btn))
+
+        # Strategy should be reset to default (90), but Rider and Bike MUST remain customized!
+        saved_after_strat = ppf.load_settings()
+        assert saved_after_strat["carbs_per_hour"] == 90
+        assert saved_after_strat["initial_ftp"] == 380
+        assert saved_after_strat["bike_w"] == 11.5
+
+        # Trigger Rider Reset in Rider Dialog
+        rider_dialog = test_ctrls["rider_dialog"]
+        rider_reset_btn = rider_dialog.actions[0]
+        assert "Fahrer" in str(rider_reset_btn.content)
+        rider_reset_btn.on_click(ev.Event(name='click', control=rider_reset_btn))
+
+        # Rider is reset to default (310), Bike remains customized!
+        saved_after_rider = ppf.load_settings()
+        assert saved_after_rider["initial_ftp"] == 310
+        assert saved_after_rider["bike_w"] == 11.5
+
+        # Trigger Bike Reset in Bike Dialog
+        bike_dialog = test_ctrls["bike_dialog"]
+        bike_reset_btn = bike_dialog.actions[0]
+        assert "Rad" in str(bike_reset_btn.content)
+        bike_reset_btn.on_click(ev.Event(name='click', control=bike_reset_btn))
+
+        # Bike is reset to default (8.0)
+        saved_after_bike = ppf.load_settings()
+        assert saved_after_bike["bike_w"] == 8.0
 
     asyncio.run(run())
 
 
 def test_card2_badge_order():
-    """Test that gi_badge is directly below carbs_slider, followed by target_f and pace_badge."""
+    """Test that in card2, pacing_mode is followed by carbs + gi_badge, then target_f + pace_badge."""
     async def run():
         page = MockPage()
         await ppf.main(page)
@@ -365,18 +389,21 @@ def test_card2_badge_order():
         main_col = tab_setup.content
         card2_col = main_col.controls[3].content.content
 
-        # Check carbs slider at 1, gi_badge at 2
-        assert isinstance(card2_col.controls[1], ft.Slider)
-        gi_badge_container = card2_col.controls[2]
+        # Pacing mode dropdown at index 0
+        assert isinstance(card2_col.controls[0], ft.Dropdown)
+
+        # Check carbs slider at 3, gi_badge at 4
+        assert isinstance(card2_col.controls[3], ft.Slider)
+        gi_badge_container = card2_col.controls[4]
         gi_text = gi_badge_container.content.controls[0].value
         assert "Magen" in gi_text or "g/h" in gi_text
 
-        # Divider at 3
-        assert isinstance(card2_col.controls[3], ft.Divider)
+        # Divider at 5
+        assert isinstance(card2_col.controls[5], ft.Divider)
 
-        # Target factor slider at 5, pace_badge at 6
-        assert isinstance(card2_col.controls[5], ft.Slider)
-        pace_badge_container = card2_col.controls[6]
+        # Target factor slider at 7, pace_badge at 8
+        assert isinstance(card2_col.controls[7], ft.Slider)
+        pace_badge_container = card2_col.controls[8]
         pace_text = pace_badge_container.content.controls[0].value
         assert "% FTP" in pace_text
 
@@ -392,7 +419,7 @@ def test_help_dialogs_and_nutrition_shopping_list():
         # 1. Check AppBar help button
         assert page.appbar is not None
         actions = page.appbar.actions
-        help_btn = actions[1]
+        help_btn = actions[3]
         assert help_btn.icon == ft.Icons.HELP_OUTLINE
         assert "Hilfe" in help_btn.tooltip
 
@@ -402,10 +429,10 @@ def test_help_dialogs_and_nutrition_shopping_list():
         latest_dlg = page._dialogs.controls[-1]
         assert "Hilfe" in latest_dlg.title.controls[1].value
 
-        # 2. Check slider contextual help icon button in card1
+        # 2. Check slider contextual help icon button in rider dialog
         tab_setup = page.controls[0].content
-        main_col = tab_setup.content
-        card1_col = main_col.controls[1].content.content
+        rider_dialog = tab_setup.test_controls["rider_dialog"]
+        card1_col = rider_dialog.content.content
         ftp_header = card1_col.controls[0]
         # In make_slider_header, Row controls: [Icon, Label, InfoBtn]
         ftp_info_btn = ftp_header.controls[0].controls[2]
@@ -419,7 +446,6 @@ def test_help_dialogs_and_nutrition_shopping_list():
         page.navigation_bar.on_change(ev.Event(name='change', control=page.navigation_bar, data='1'))
         tab_analysis = page.controls[0].content
         analysis_col = tab_analysis.content
-        # Shopping card is at the end of Tab 2
         shopping_header = analysis_col.controls[9]
         assert "Sportnahrungs-Einkaufsliste" in shopping_header.controls[1].value
         shopping_card = analysis_col.controls[10]
@@ -431,6 +457,40 @@ def test_help_dialogs_and_nutrition_shopping_list():
         assert "Iso" in iso_box
         assert "Gels" in gels_box
         assert "Sportriegel" in bars_box
+
+    asyncio.run(run())
+
+
+def test_headline_chips_and_modal_dialogs():
+    """Test user, bike, and route chips in headline opening their respective modal dialogs."""
+    async def run():
+        page = MockPage()
+        await ppf.main(page)
+
+        actions = page.appbar.actions
+        rider_chip = actions[0]
+        bike_chip = actions[1]
+        route_chip = actions[2]
+
+        # 1. Rider chip shows FTP
+        assert "310 W" in rider_chip.content.controls[1].value
+        rider_chip.on_click(ev.Event(name='click', control=rider_chip))
+        assert len(page._dialogs.controls) == 1
+        assert "Fahrereinstellungen" in page._dialogs.controls[-1].title.controls[1].value
+        page.pop_dialog()
+
+        # 2. Bike chip shows weight
+        assert "8.0 kg" in bike_chip.content.controls[1].value
+        bike_chip.on_click(ev.Event(name='click', control=bike_chip))
+        assert len(page._dialogs.controls) == 1
+        assert "Fahrrad" in page._dialogs.controls[-1].title.controls[1].value
+        page.pop_dialog()
+
+        # 3. Route chip is interactive and opens route dialog
+        route_chip.on_click(ev.Event(name='click', control=route_chip))
+        assert len(page._dialogs.controls) == 1
+        assert "Streckenauswahl" in page._dialogs.controls[-1].title.controls[1].value
+        page.pop_dialog()
 
     asyncio.run(run())
 
