@@ -383,5 +383,58 @@ def test_card2_badge_order():
     asyncio.run(run())
 
 
+def test_help_dialogs_and_nutrition_shopping_list():
+    """Test that global help, contextual info dialogs, and the nutrition shopping list are active."""
+    async def run():
+        page = MockPage()
+        await ppf.main(page)
+
+        # 1. Check AppBar help button
+        assert page.appbar is not None
+        actions = page.appbar.actions
+        help_btn = actions[1]
+        assert help_btn.icon == ft.Icons.HELP_OUTLINE
+        assert "Hilfe" in help_btn.tooltip
+
+        # Click global help button
+        help_btn.on_click(ev.Event(name='click', control=help_btn))
+        assert len(page._dialogs.controls) > 0
+        latest_dlg = page._dialogs.controls[-1]
+        assert "Hilfe" in latest_dlg.title.controls[1].value
+
+        # 2. Check slider contextual help icon button in card1
+        tab_setup = page.controls[0].content
+        main_col = tab_setup.content
+        card1_col = main_col.controls[1].content.content
+        ftp_header = card1_col.controls[0]
+        # In make_slider_header, Row controls: [Icon, Label, InfoBtn]
+        ftp_info_btn = ftp_header.controls[0].controls[2]
+        assert ftp_info_btn.icon == ft.Icons.INFO_OUTLINE
+        assert "Start-FTP" in ftp_info_btn.tooltip
+        ftp_info_btn.on_click(ev.Event(name='click', control=ftp_info_btn))
+        assert len(page._dialogs.controls) > 1
+
+        # 3. Check Tab 2 Sportnahrungs-Einkaufsliste
+        page.navigation_bar.selected_index = 1
+        page.navigation_bar.on_change(ev.Event(name='change', control=page.navigation_bar, data='1'))
+        tab_analysis = page.controls[0].content
+        analysis_col = tab_analysis.content
+        # Shopping card is at the end of Tab 2
+        shopping_header = analysis_col.controls[9]
+        assert "Sportnahrungs-Einkaufsliste" in shopping_header.controls[1].value
+        shopping_card = analysis_col.controls[10]
+        shopping_items_row = shopping_card.content.content.controls[1]
+        assert len(shopping_items_row.controls) == 3
+        iso_box = shopping_items_row.controls[0].content.value
+        gels_box = shopping_items_row.controls[1].content.value
+        bars_box = shopping_items_row.controls[2].content.value
+        assert "Iso" in iso_box
+        assert "Gels" in gels_box
+        assert "Sportriegel" in bars_box
+
+    asyncio.run(run())
+
+
+
 
 

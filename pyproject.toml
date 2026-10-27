@@ -3,7 +3,7 @@ name = "power-planner"
 version = "1.0.0"
 description = "Power Planner - Pacing & Nutrition Strategy"
 dependencies = [
-    "flet==0.86.0",
+    "flet==0.86.5",
     "pandas>=2.0.0",
     "numpy>=1.24.0",
     "matplotlib>=3.8.0",
@@ -40,7 +40,7 @@ permissions = ["camera"]
 [tool.flet.ios]
 bundle_id = "com.pacing.powerplanner"
 dependencies = [
-    "flet==0.86.0",
+    "flet==0.86.5",
     "pandas>=2.0.0",
     "numpy>=1.24.0",
     "matplotlib>=3.8.0",

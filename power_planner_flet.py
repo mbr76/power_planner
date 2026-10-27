@@ -47,8 +47,8 @@ except ImportError:
 
 # App Version & Build Metadata
 APP_VERSION = "1.0.0"
-BUILD_NUMBER = "42"
-BUILD_TIMESTAMP = "2026-10-26 21:09:37"
+BUILD_NUMBER = "43"
+BUILD_TIMESTAMP = "2026-10-27 09:15:47"
 
 # Übersetzungs-Presets für Berggänge (kleinste Übersetzung) und Abfahrten (größte Übersetzung)
 GEAR_RATIOS_LOW = {
@@ -611,6 +611,88 @@ async def main(page: ft.Page):
                 show_close_icon=True
             )
         )
+
+    def show_help_dialog(title: str, text: str):
+        dlg = ft.AlertDialog(
+            modal=False,
+            title=ft.Row([
+                ft.Icon(ft.Icons.INFO_OUTLINE, color=ft.Colors.AMBER_400, size=22),
+                ft.Text(title, size=16, weight=ft.FontWeight.BOLD, expand=True),
+            ], spacing=10),
+            content=ft.Container(
+                content=ft.Column([
+                    ft.Text(text, size=13, color=ft.Colors.GREY_300, selectable=True),
+                ], tight=True, spacing=8),
+                width=420,
+            ),
+            actions=[
+                ft.TextButton("Schließen", on_click=lambda _: page.pop_dialog()),
+            ],
+        )
+        page.show_dialog(dlg)
+
+    def open_full_help_dialog(_=None):
+        guide_sections = [
+            ("🔧 Fahrereinstellungen & Physik", (
+                "• Start-FTP (Watt): Deine maximale Schwellenleistung über 60 Minuten. Bildet die 100%-Basis für alle Zonen und Berechnungen.\n"
+                "• W'-Kapazität (Joule): Dein anaerober 'Akku' (10.000–30.000 J). Jede Sekunde über der FTP entleert ihn; unterhalb der FTP lädt er sich wieder auf.\n"
+                "• Fahrergewicht & Systemgewicht: Gewicht des Fahrers bzw. inklusive Rad und Ausrüstung. Bestimmt physikalisch den Steigungswiderstand an jedem Streckenmeter."
+            )),
+            ("🍏 Ernährungsstrategie & Magen-Absorption", (
+                "• Kohlenhydrate (g/h): Geplante stündliche Energiezufuhr (Standard 80–90 g/h für Marathons).\n"
+                "• Glykogenspeicher: Der 2.000 kcal Körpertank wird durch kontinuierliche Zufuhr geschützt, um den gefürchteten 'Hungerast' zu verhindern.\n"
+                "• Magenverträglichkeit (GI): Bei Werten über 90 g/h warnt das System vor Magen-Darm-Stress und erhöhtem Flüssigkeits-/Elektrolytbedarf."
+            )),
+            ("⚙️ Schaltung, Kadenz & Pacing-Kurven", (
+                "• Berggang & Kletter-Kadenz: Verhindert zu schwere Gänge an Steilrampen; erzwingt im Notfall die nötige Watt-Mindestleistung.\n"
+                "• Abfahrtsgang & Spin-Out: Sobald bergab die Maximal-Kadenz überschritten wird, schaltet das Pacing auf 0 W (aerodynamischer Freilauf).\n"
+                "• Dynamisch: Kontinuierlich wattgesteuert und physiologisch optimiert.\n"
+                "• Klassisch Stufe: Feste 130 W Grundlast im Flachen und ab leichtem Gefälle (-1.5%)."
+            )),
+            ("🗺️ Streckenprofil & Höhen-API", (
+                "• GPX-Import: Per Dateiauswahl, Projektordner oder GPX-XML Copy-Paste.\n"
+                "• Höhen-API: Fehlen Höhendaten in der GPX-Datei, werden diese automatisch über die Open-Meteo SRTM-API abgerufen."
+            )),
+            ("🚴‍♂️ Karoo-Transfer & Hammerhead Cloud", (
+                "• QR-Kamera-Scan: Hältst du die Kamera auf den Karoo-QR-Code, wird die Route sofort per WLAN übertragen.\n"
+                "• Manuelle Eingabe: Schnelle Kopplung per IP und 6-stelligem Code oder URL.\n"
+                "• Hammerhead Cloud Sync: Lädt nach erfolgreichem Karoo-Transfer die Route automatisch als .gpx in dein Hammerhead Dashboard hoch."
+            )),
+            ("💾 Workout-Exporte & Sportnahrungs-Einkaufsliste", (
+                "• Dateiexporte: Karoo Power-Track JSON (.ptj), Zwift Workout (.zwo), Garmin Workout (.fit).\n"
+                "• Einkaufsliste: Berechnet deinen exakten Bedarf an Iso-Flaschen, Gels und Riegeln für das gesamte Rennen."
+            )),
+        ]
+
+        dlg = ft.AlertDialog(
+            modal=False,
+            title=ft.Row([
+                ft.Icon(ft.Icons.HELP_OUTLINE, color=ft.Colors.AMBER_400, size=24),
+                ft.Text("Power-Planner Anleitung & Hilfe", size=17, weight=ft.FontWeight.BOLD),
+            ], spacing=10),
+            content=ft.Container(
+                content=ft.Column([
+                    ft.Text("Vollständige Funktions- & Modell-Übersicht:", size=12, color=ft.Colors.GREY_400),
+                    ft.Divider(height=10, color=ft.Colors.GREY_800),
+                    *[
+                        ft.Container(
+                            content=ft.Column([
+                                ft.Text(title, size=13, weight=ft.FontWeight.BOLD, color=ft.Colors.AMBER_300),
+                                ft.Text(body, size=12, color=ft.Colors.GREY_300),
+                            ], spacing=4),
+                            padding=ft.Padding.only(bottom=8),
+                        )
+                        for title, body in guide_sections
+                    ],
+                ], scroll=ft.ScrollMode.AUTO, spacing=10),
+                width=480,
+                height=420,
+            ),
+            actions=[
+                ft.TextButton("Schließen", on_click=lambda _: page.pop_dialog()),
+            ],
+        )
+        page.show_dialog(dlg)
 
     # Application State
     state = dict(DEFAULT_SETTINGS)
@@ -1260,6 +1342,7 @@ async def main(page: ft.Page):
             update_pace_badge()
             update_gi_badge()
             update_gearing_badge()
+            update_shopping_list()
             route_status_chip_text.value = format_chip_route(state['gpx_path'])
             route_status_chip.tooltip = os.path.basename(state['gpx_path'])
             save_settings(state)
@@ -1645,16 +1728,35 @@ async def main(page: ft.Page):
                     icon_color=ft.Colors.GREY_400,
                     on_click=on_reset_settings_click,
                 ),
-            ], spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                ft.IconButton(
+                    icon=ft.Icons.HELP_OUTLINE,
+                    icon_size=18,
+                    tooltip="Anleitung & Hilfe öffnen",
+                    icon_color=ft.Colors.AMBER_400,
+                    on_click=open_full_help_dialog,
+                ),
+            ], spacing=6, vertical_alignment=ft.CrossAxisAlignment.CENTER),
         ], spacing=4),
     )
 
-    def make_slider_header(icon, label, val_text_control, color):
+    def make_slider_header(icon, label, val_text_control, color, help_title=None, help_text=None):
+        header_row = [
+            ft.Icon(icon, size=16, color=color),
+            ft.Text(label, size=13, weight=ft.FontWeight.W_500, expand=True, no_wrap=False),
+        ]
+        if help_text:
+            h_title = help_title or label
+            header_row.append(
+                ft.IconButton(
+                    icon=ft.Icons.INFO_OUTLINE,
+                    icon_size=15,
+                    icon_color=ft.Colors.GREY_400,
+                    tooltip=f"Info: {label}",
+                    on_click=lambda _, t=h_title, d=help_text: show_help_dialog(t, d),
+                )
+            )
         return ft.Column([
-            ft.Row([
-                ft.Icon(icon, size=16, color=color),
-                ft.Text(label, size=13, weight=ft.FontWeight.W_500, expand=True, no_wrap=False),
-            ], spacing=6),
+            ft.Row(header_row, spacing=4, vertical_alignment=ft.CrossAxisAlignment.CENTER),
             ft.Row([
                 ft.Container(
                     content=val_text_control,
@@ -1669,21 +1771,37 @@ async def main(page: ft.Page):
     card1 = ft.Card(
         content=ft.Container(
             content=ft.Column([
-                make_slider_header(ft.Icons.BOLT, "Start-FTP", ftp_val_text, ft.Colors.AMBER_400),
+                make_slider_header(
+                    ft.Icons.BOLT, "Start-FTP", ftp_val_text, ft.Colors.AMBER_400,
+                    "Start-FTP (Functional Threshold Power)",
+                    "Die maximale Dauerleistung in Watt, die du theoretisch 60 Minuten lang konstant halten kannst. Bildet die 100%-Referenz für alle Trainingszonen und aeroben Berechnungen."
+                ),
                 ftp_slider,
 
                 ft.Divider(height=10, color=ft.Colors.TRANSPARENT),
-                make_slider_header(ft.Icons.BATTERY_CHARGING_FULL, "W'-Kapazität (Akku)", wprime_val_text, ft.Colors.RED_400),
+                make_slider_header(
+                    ft.Icons.BATTERY_CHARGING_FULL, "W'-Kapazität (Akku)", wprime_val_text, ft.Colors.RED_400,
+                    "W'-Kapazität (Anaerober Akku)",
+                    "Dein anaerober Speicher in Joule. Jede Sekunde, in der du über deiner FTP fährst, leert diesen Tank. Fährst du unterhalb der FTP, lädt er sich wieder auf (typisch: 15.000 J für Einsteiger bis 25.000+ J für Sprinter/Profis)."
+                ),
                 wprime_slider,
 
                 ft.Divider(height=10, color=ft.Colors.TRANSPARENT),
                 ft.ResponsiveRow([
                     ft.Column([
-                        make_slider_header(ft.Icons.PERSON, "Fahrergewicht", rider_w_val_text, ft.Colors.BLUE_400),
+                        make_slider_header(
+                            ft.Icons.PERSON, "Fahrergewicht", rider_w_val_text, ft.Colors.BLUE_400,
+                            "Fahrergewicht (kg)",
+                            "Dein reines Körpergewicht ohne Ausrüstung. Maßgeblich für die Steigungsleistung am Berg und die Berechnung des Leistungsgewichts (W/kg)."
+                        ),
                         rider_w_slider,
                     ], col={"xs": 12, "md": 6}),
                     ft.Column([
-                        make_slider_header(ft.Icons.DIRECTIONS_BIKE, "Fahrrad & Ausrüstung", bike_w_val_text, ft.Colors.CYAN_400),
+                        make_slider_header(
+                            ft.Icons.DIRECTIONS_BIKE, "Fahrrad & Ausrüstung", bike_w_val_text, ft.Colors.CYAN_400,
+                            "Fahrrad & Ausrüstung (kg)",
+                            "Das Gesamtgewicht deines Fahrrads inklusive gefüllter Trinkflaschen, Bekleidung, Helm, Schuhen, Werkzeug und Riegeln (meist ca. 8-10 kg)."
+                        ),
                         bike_w_slider,
                     ], col={"xs": 12, "md": 6}),
                 ]),
@@ -1701,18 +1819,36 @@ async def main(page: ft.Page):
             border_radius=8,
             padding=6,
         ),
-        ft.Text("Ernährungsstrategie & Intensität", size=15, weight=ft.FontWeight.BOLD),
+        ft.Text("Ernährungsstrategie & Intensität", size=15, weight=ft.FontWeight.BOLD, expand=True),
+        ft.IconButton(
+            icon=ft.Icons.INFO_OUTLINE,
+            icon_size=16,
+            icon_color=ft.Colors.GREY_400,
+            tooltip="Info zu Ernährung & Intensität",
+            on_click=lambda _: show_help_dialog(
+                "Ernährungsstrategie & Intensität",
+                "Steuert deine Zielleistung und Energieaufnahme. Der Glykogentank fasst ca. 2.000 kcal. Durch rechtzeitige Kohlenhydratzufuhr hältst du deine Leistungsfähigkeit bis zum letzten Berg stabil."
+            ),
+        ),
     ], spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER)
 
     card2 = ft.Card(
         content=ft.Container(
             content=ft.Column([
-                make_slider_header(ft.Icons.RESTAURANT, "Kohlenhydrate (g/h)", carbs_val_text, ft.Colors.GREEN_400),
+                make_slider_header(
+                    ft.Icons.RESTAURANT, "Kohlenhydrate (g/h)", carbs_val_text, ft.Colors.GREEN_400,
+                    "Kohlenhydrate pro Stunde (g/h)",
+                    "Die geplante Zufuhr an Kohlenhydraten pro Stunde. Schützt den körpereigenen Glykogenspeicher und verzögert den Hungerast. Für Marathons werden 80-100 g/h empfohlen; Werte über 90 g/h erfordern Dual-Source Fructose/Maltodextrin und Magen-Darm-Training."
+                ),
                 carbs_slider,
                 gi_badge,
 
                 ft.Divider(height=10, color=ft.Colors.TRANSPARENT),
-                make_slider_header(ft.Icons.SPEED, "Intensitätsfaktor (Target Factor)", target_f_val_text, ft.Colors.ORANGE_400),
+                make_slider_header(
+                    ft.Icons.SPEED, "Intensitätsfaktor (Target Factor)", target_f_val_text, ft.Colors.ORANGE_400,
+                    "Intensitätsfaktor (Target Factor)",
+                    "Der prozentuale Anteil deiner FTP, den du im flachen und leicht ansteigenden Gelände als Basis anstrebst (z. B. 0.82 = 82% FTP). Höhere Werte verringern die Fahrzeit, leeren aber die Energiespeicher deutlich rascher."
+                ),
                 target_f_slider,
                 pace_badge,
             ]),
@@ -1729,7 +1865,17 @@ async def main(page: ft.Page):
             border_radius=8,
             padding=6,
         ),
-        ft.Text("Übersetzung, Trittfrequenz & Pacing-Kurve", size=15, weight=ft.FontWeight.BOLD),
+        ft.Text("Übersetzung, Trittfrequenz & Pacing-Kurve", size=15, weight=ft.FontWeight.BOLD, expand=True),
+        ft.IconButton(
+            icon=ft.Icons.INFO_OUTLINE,
+            icon_size=16,
+            icon_color=ft.Colors.GREY_400,
+            tooltip="Info zu Schaltung & Kadenz",
+            on_click=lambda _: show_help_dialog(
+                "Übersetzung, Trittfrequenz & Pacing-Kurve",
+                "Kombiniert deine Schaltung mit deiner persönlichen Biomechanik. Berechnet präzise, in welchen Streckenabschnitten du effektiv pedalieren kannst und wann aerodynamisches Rollen lassen Kraft spart."
+            ),
+        ),
     ], spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER)
 
     card_gearing = ft.Card(
@@ -1741,13 +1887,21 @@ async def main(page: ft.Page):
                     ft.Column([
                         lowest_gear_dropdown,
                         ft.Container(height=4),
-                        make_slider_header(ft.Icons.ROTATE_RIGHT, "Minimale Kletter-Kadenz", min_cadence_val_text, ft.Colors.PURPLE_300),
+                        make_slider_header(
+                            ft.Icons.ROTATE_RIGHT, "Minimale Kletter-Kadenz", min_cadence_val_text, ft.Colors.PURPLE_300,
+                            "Minimale Kletter-Kadenz (rpm)",
+                            "Deine angestrebte Mindest-Trittfrequenz an steilen Rampen. Verhindert unphysiologisch schweres Stampfen. Fällt die Geschwindigkeit zu tief, errechnet das System die nötige Minimalleistung."
+                        ),
                         min_cadence_slider,
                     ], col={"xs": 12, "md": 6}),
                     ft.Column([
                         highest_gear_dropdown,
                         ft.Container(height=4),
-                        make_slider_header(ft.Icons.FAST_FORWARD, "Maximale Pedalier-Kadenz (Spin-Out)", max_cadence_val_text, ft.Colors.DEEP_PURPLE_300),
+                        make_slider_header(
+                            ft.Icons.FAST_FORWARD, "Maximale Pedalier-Kadenz (Spin-Out)", max_cadence_val_text, ft.Colors.DEEP_PURPLE_300,
+                            "Maximale Pedalier-Kadenz (Spin-Out)",
+                            "Deine persönliche Grenze für schnelles Pedalieren in Abfahrten. Sobald das Tempo im größten Gang diese Kadenz überschreitet, schaltet das Pacing auf 0 W (aerodynamischer Freilauf)."
+                        ),
                         max_cadence_slider,
                     ], col={"xs": 12, "md": 6}),
                 ]),
@@ -1767,7 +1921,17 @@ async def main(page: ft.Page):
             border_radius=8,
             padding=6,
         ),
-        ft.Text("Streckenprofil & GPX-Import", size=15, weight=ft.FontWeight.BOLD),
+        ft.Text("Streckenprofil & GPX-Import", size=15, weight=ft.FontWeight.BOLD, expand=True),
+        ft.IconButton(
+            icon=ft.Icons.INFO_OUTLINE,
+            icon_size=16,
+            icon_color=ft.Colors.GREY_400,
+            tooltip="Info zum Streckenimport",
+            on_click=lambda _: show_help_dialog(
+                "Streckenprofil & GPX-Import",
+                "Du kannst Streckendateien (.gpx) über den Dateibrowser wählen, aus dem Projektordner laden oder den XML-Code direkt einfügen. Fehlen Höhenmeter, werden diese automatisch über die SRTM Geländehöhen-API ergänzt."
+            ),
+        ),
     ], spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER)
 
     card3 = ft.Card(
@@ -1840,8 +2004,65 @@ async def main(page: ft.Page):
     )
 
     # ----------------------------------------------------
-    # TAB 2: ANALYSE & CHARTS
+    # TAB 2: ANALYSE & CHARTS & SPORTNAHRUNG
     # ----------------------------------------------------
+    shopping_iso_text = ft.Text("-", size=13, weight=ft.FontWeight.BOLD, color=ft.Colors.CYAN_300)
+    shopping_gels_text = ft.Text("-", size=13, weight=ft.FontWeight.BOLD, color=ft.Colors.GREEN_300)
+    shopping_bars_text = ft.Text("-", size=13, weight=ft.FontWeight.BOLD, color=ft.Colors.AMBER_300)
+
+    def update_shopping_list():
+        if not state["calc"] or "total_hours" not in state["calc"]:
+            return
+        total_hours = max(0.5, float(state["calc"]["total_hours"]))
+        carbs_h = float(state.get("carbs_per_hour", 90))
+        iso_bottles = math.ceil(total_hours)
+        remaining_carbs = max(0.0, (total_hours * carbs_h) - (iso_bottles * 35.0))
+        standard_gels = math.ceil((remaining_carbs / 2.0) / 30.0)
+        hydro_bars = math.ceil((remaining_carbs / 2.0) / 40.0)
+
+        shopping_iso_text.value = f"🥤 {iso_bottles}x Iso-Portionsbeutel (à 35g KH)"
+        shopping_gels_text.value = f"🧪 {standard_gels}x Standard-Gels (à 30g KH)"
+        shopping_bars_text.value = f"🥮 {hydro_bars}x Sportriegel / Hydro-Gels (à 40g KH)"
+
+    update_shopping_list()
+
+    shopping_card = ft.Card(
+        content=ft.Container(
+            content=ft.Column([
+                ft.Text("Empfohlene Verpflegungsausrüstung für das gesamte Rennen:", size=12, color=ft.Colors.GREY_400),
+                ft.ResponsiveRow([
+                    ft.Container(
+                        content=shopping_iso_text,
+                        bgcolor=ft.Colors.with_opacity(0.10, ft.Colors.CYAN),
+                        padding=ft.Padding.symmetric(horizontal=12, vertical=10),
+                        border_radius=10,
+                        border=ft.Border.all(1, ft.Colors.with_opacity(0.20, ft.Colors.CYAN)),
+                        col={"xs": 12, "sm": 4},
+                    ),
+                    ft.Container(
+                        content=shopping_gels_text,
+                        bgcolor=ft.Colors.with_opacity(0.10, ft.Colors.GREEN),
+                        padding=ft.Padding.symmetric(horizontal=12, vertical=10),
+                        border_radius=10,
+                        border=ft.Border.all(1, ft.Colors.with_opacity(0.20, ft.Colors.GREEN)),
+                        col={"xs": 12, "sm": 4},
+                    ),
+                    ft.Container(
+                        content=shopping_bars_text,
+                        bgcolor=ft.Colors.with_opacity(0.10, ft.Colors.AMBER),
+                        padding=ft.Padding.symmetric(horizontal=12, vertical=10),
+                        border_radius=10,
+                        border=ft.Border.all(1, ft.Colors.with_opacity(0.20, ft.Colors.AMBER)),
+                        col={"xs": 12, "sm": 4},
+                    ),
+                ], spacing=8, run_spacing=8),
+            ], spacing=8),
+            padding=16,
+            border_radius=16,
+        ),
+        shape=ft.RoundedRectangleBorder(radius=16),
+    )
+
     tab_analysis_view = ft.Container(
         content=ft.Column([
             build_kpi_overview_section(kpi_controls_t2),
@@ -1889,6 +2110,30 @@ async def main(page: ft.Page):
                 ft.Text("Workout-Segmente (Zonen)", size=15, weight=ft.FontWeight.BOLD, expand=True),
             ], spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER),
             ft.Card(content=ft.Container(content=intervals_column, padding=12), shape=ft.RoundedRectangleBorder(radius=16)),
+
+            # Sportnahrungs-Einkaufsliste
+            ft.Row([
+                ft.Container(
+                    content=ft.Icon(ft.Icons.SHOPPING_BAG, size=16, color=ft.Colors.GREEN_400),
+                    bgcolor=ft.Colors.with_opacity(0.15, ft.Colors.GREEN),
+                    border_radius=8,
+                    padding=6,
+                ),
+                ft.Text("Sportnahrungs-Einkaufsliste", size=15, weight=ft.FontWeight.BOLD, expand=True),
+                ft.IconButton(
+                    icon=ft.Icons.INFO_OUTLINE,
+                    icon_size=16,
+                    icon_color=ft.Colors.GREY_400,
+                    tooltip="Info zur Sportnahrungs-Einkaufsliste",
+                    on_click=lambda _: show_help_dialog(
+                        "Sportnahrungs-Einkaufsliste",
+                        "Berechnet deinen exakten Verpflegungsbedarf auf Basis der prognostizierten Fahrzeit und deiner eingestellten Kohlenhydrate pro Stunde:\n\n"
+                        "• Iso-Getränkepulver: 1 Flasche pro Rennstunde (ca. 35g KH).\n"
+                        "• Feste / halbfeste Nahrung: Der restliche Kohlenhydratbedarf wird zu 50% über schnelle Gels (30g KH) und zu 50% über Riegel/Hydro-Gels (40g KH) aufgeteilt."
+                    ),
+                ),
+            ], spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+            shopping_card,
         ], spacing=16, scroll=ft.ScrollMode.AUTO, expand=True),
         padding=16,
         expand=True
@@ -2712,6 +2957,12 @@ async def main(page: ft.Page):
         on_change=on_nav_change
     )
 
+    help_btn = ft.IconButton(
+        icon=ft.Icons.HELP_OUTLINE,
+        tooltip="Hilfe & Anleitung",
+        on_click=open_full_help_dialog,
+    )
+
     app_bar = ft.AppBar(
         leading=ft.Icon(ft.Icons.DIRECTIONS_BIKE, color=ft.Colors.AMBER_400, size=26),
         leading_width=36,
@@ -2721,6 +2972,7 @@ async def main(page: ft.Page):
         ], spacing=0),
         actions=[
             route_status_chip,
+            help_btn,
             theme_btn,
             ft.Container(width=4)
         ],
