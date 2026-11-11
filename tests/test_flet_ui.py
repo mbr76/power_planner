@@ -538,6 +538,59 @@ def test_i18n_language_switching():
     asyncio.run(run())
 
 
+def test_tab2_fullscreen_charts_and_mobile_rotation():
+    """Test that all 3 graphics in Tab 2 (route map, elevation/power, energy) open fullscreen and rotate 90° on mobile."""
+    import base64
+    async def run():
+        page = MockPage()
+        page.platform = ft.PagePlatform.MACOS
+        await ppf.main(page)
+
+        # Navigate to Tab 2 (Analyse & Charts)
+        page.navigation_bar.selected_index = 1
+        page.navigation_bar.on_change(ev.Event(name='change', control=page.navigation_bar, data='1'))
+        tab_analysis = page.controls[0].content
+        tc = tab_analysis.test_controls
+
+        # 1. Desktop: Click Route Map card -> opens fullscreen without rotation (landscape width > height)
+        map_card = tc["map_card_container"]
+        map_card.on_click(ev.Event(name='click', control=map_card))
+        assert page._dialogs.controls[-1] is tc["fullscreen_chart_dialog"]
+        assert tc["fullscreen_state"]["chart_key"] == "map"
+        assert tc["fullscreen_state"]["rotated"] is False
+        with Image.open(io.BytesIO(base64.b64decode(tc["fullscreen_img"].src))) as im_desk:
+            w_desk, h_desk = im_desk.size
+            assert w_desk > h_desk
+        page.pop_dialog()
+
+        # 2. Mobile (iOS): Click all 3 graphics -> automatically rotated by 90° (portrait height > width)
+        page.platform = ft.PagePlatform.IOS
+        for key, card_ctrl in [
+            ("map", tc["map_card_container"]),
+            ("elevation", tc["elevation_card_container"]),
+            ("energy", tc["energy_card_container"]),
+        ]:
+            card_ctrl.on_click(ev.Event(name='click', control=card_ctrl))
+            assert page._dialogs.controls[-1] is tc["fullscreen_chart_dialog"]
+            assert tc["fullscreen_state"]["chart_key"] == key
+            assert tc["fullscreen_state"]["rotated"] is True
+            with Image.open(io.BytesIO(base64.b64decode(tc["fullscreen_img"].src))) as im_mob:
+                w_mob, h_mob = im_mob.size
+                assert h_mob > w_mob  # 90° rotated swaps dimensions so height > width
+
+            # 3. Test manual rotation toggle button in fullscreen dialog
+            rot_btn = tc["fullscreen_rotate_btn"]
+            rot_btn.on_click(ev.Event(name='click', control=rot_btn))
+            assert tc["fullscreen_state"]["rotated"] is False
+            with Image.open(io.BytesIO(base64.b64decode(tc["fullscreen_img"].src))) as im_toggled:
+                w_tog, h_tog = im_toggled.size
+                assert w_tog > h_tog
+            page.pop_dialog()
+
+    asyncio.run(run())
+
+
+
 
 
 

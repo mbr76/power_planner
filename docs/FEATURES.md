@@ -63,9 +63,10 @@
    * Streckenprofil & GPX-Import (Dateiauswahl, GPX-XML Paste Dialog, lokales Projekt-Dropdown).
 2. **Analyse & Charts (Tab 2):**
    * Einheitliche KPI-Übersichtsleiste.
-   * Strecken-Vorschau (2D-Streckenkarte via Matplotlib).
-   * Höhenprofil & Ziel-Leistungs-Chart (kombinierter Plot aus Topografie und Wattvorgabe).
-   * Energiespeicher-Chart (W'-Akku in % und Glykogentank in % über die Gesamtdistanz).
+   * Strecken-Vorschau (2D-Streckenkarte via Matplotlib) – anklickbar für Vollbildansicht.
+   * Höhenprofil & Ziel-Leistungs-Chart (kombinierter Plot aus Topografie und Wattvorgabe) – anklickbar für Vollbildansicht.
+   * Energiespeicher-Chart (W'-Akku in % und Glykogentank in % über die Gesamtdistanz) – anklickbar für Vollbildansicht.
+   * **Interaktive Vollbild-Ansicht & 90°-Mobil-Rotation:** Alle drei Grafiken (inkl. Streckenkarte) können per Klick auf die Karte oder über den Vollbild-Button im Header im Vollbildmodus (`InteractiveViewer` mit Pinch-to-Zoom & Pan) geöffnet werden. Auf Mobilgeräten (iOS/Android/Mobile-Portrait) wird die Grafik im Vollbild automatisch um 90° gedreht dargestellt, um die gesamte Displayhöhe optimal auszunutzen; zusätzlich steht ein manueller 90°-Drehbutton zur Verfügung.
    * Berechnete Workout-Segmente nach Coggan-Zonen (Z1 bis Z7 mit Farbcodierung und exakter Dauer).
    * **Sportnahrungs-Einkaufsliste:** Aufgeschlüsselte Bedarfsplanung (Iso-Getränke-Portionen, Standard-Gels à 30g KH, Sportriegel / Hydro-Gels à 40g KH).
 3. **Karoo-Sync & Exporte (Tab 3):**
@@ -174,5 +175,5 @@ Bevor Änderungen eingecheckt werden, muss sichergestellt sein:
 1. **Keine Features entfernen:** Slider, Badges, Badges-Reihenfolge, Einkaufsliste, Charts und Tabs bleiben vollständig erhalten.
 2. **KPI-Karten-Konsistenz:** Die KPI-Leiste auf allen drei Tabs muss synchron bleiben und die gleichen sechs Felder enthalten.
 3. **Persistenz:** Neue Parameter müssen in `DEFAULT_SETTINGS`, `save_settings` und `apply_settings` registriert werden.
-4. **Testabdeckung:** Alle 48 Tests in `tests/` müssen fehlerfrei durchlaufen (`pytest tests/ -v`).
+4. **Testabdeckung:** Alle 49 Tests in `tests/` müssen fehlerfrei durchlaufen (`pytest tests/ -v`).
 5. **iOS-Sync:** Nach Änderungen an Python-Dateien muss `./scripts/sync_ios_app.sh` ausgeführt werden.

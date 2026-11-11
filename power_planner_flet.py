@@ -55,8 +55,8 @@ except ImportError:
 
 # App Version & Build Metadata
 APP_VERSION = "1.0.0"
-BUILD_NUMBER = "47"
-BUILD_TIMESTAMP = "2026-11-11 10:46:39"
+BUILD_NUMBER = "48"
+BUILD_TIMESTAMP = "2026-11-11 11:56:02"
 
 # Übersetzungs-Presets für Berggänge (kleinste Übersetzung) und Abfahrten (größte Übersetzung)
 GEAR_RATIOS_LOW = {
@@ -646,6 +646,51 @@ def apply_settings(state: dict, saved: dict):
         state["hh_email"] = sync_src["hh_email"]
     if "hh_auto_sync" in sync_src and isinstance(sync_src["hh_auto_sync"], bool):
         state["hh_auto_sync"] = sync_src["hh_auto_sync"]
+
+
+def is_mobile_device(page=None) -> bool:
+    """Detects whether the app is running on a mobile device (iOS / Android) or mobile portrait viewport."""
+    flet_platform = (os.environ.get("FLET_PLATFORM") or "").lower()
+    if (
+        flet_platform in ("ios", "ipados", "android")
+        or sys.platform in ("ios", "android")
+        or "ANDROID_DATA" in os.environ
+    ):
+        return True
+    if page is not None:
+        plat = getattr(page, "platform", None)
+        if plat is not None:
+            plat_str = str(getattr(plat, "value", plat)).lower()
+            if "ios" in plat_str or "android" in plat_str:
+                return True
+        w = getattr(page, "width", None)
+        h = getattr(page, "height", None)
+        if isinstance(w, (int, float)) and isinstance(h, (int, float)) and 0 < w < h and w <= 600:
+            return True
+    return False
+
+
+def rotate_base64_image(b64_str: str, degrees: int = 90) -> str:
+    """Rotates a base64-encoded PNG image by the specified degrees (90 = 90° clockwise) so pixel dimensions swap."""
+    if not b64_str or (degrees % 360) == 0:
+        return b64_str
+    try:
+        raw_bytes = base64.b64decode(b64_str)
+        with Image.open(io.BytesIO(raw_bytes)) as img:
+            deg = degrees % 360
+            if deg == 90:
+                rotated = img.transpose(Image.Transpose.ROTATE_270)
+            elif deg == 180:
+                rotated = img.transpose(Image.Transpose.ROTATE_180)
+            elif deg == 270:
+                rotated = img.transpose(Image.Transpose.ROTATE_90)
+            else:
+                rotated = img.rotate(-deg, expand=True)
+            buf = io.BytesIO()
+            rotated.save(buf, format="PNG")
+            return base64.b64encode(buf.getvalue()).decode("utf-8")
+    except Exception:
+        return b64_str
 
 
 # ==========================================
@@ -2403,6 +2448,148 @@ async def main(page: ft.Page):
     energy_section_title = ft.Text(t("tab2.energy_tanks"), size=15, weight=ft.FontWeight.BOLD, expand=True)
     intervals_section_title = ft.Text(t("tab2.intervals_zones"), size=15, weight=ft.FontWeight.BOLD, expand=True)
     shopping_section_title = ft.Text(t("tab2.shopping_title"), size=15, weight=ft.FontWeight.BOLD, expand=True)
+
+    # Fullscreen Chart & Map Viewer (automatically rotated 90° on mobile devices)
+    fullscreen_state = {
+        "chart_key": None,
+        "base_src": "",
+        "rotated": False,
+    }
+    fullscreen_dialog_icon = ft.Icon(ft.Icons.SHOW_CHART, color=ft.Colors.AMBER_400, size=20)
+    fullscreen_dialog_title = ft.Text("", size=15, weight=ft.FontWeight.BOLD, expand=True, no_wrap=True, overflow=ft.TextOverflow.ELLIPSIS)
+    fullscreen_img = ft.Image(src="", fit=ft.BoxFit.CONTAIN, expand=True, border_radius=8)
+
+    def on_toggle_fullscreen_rotation(_=None):
+        fullscreen_state["rotated"] = not fullscreen_state["rotated"]
+        deg = 90 if fullscreen_state["rotated"] else 0
+        fullscreen_img.src = rotate_base64_image(fullscreen_state["base_src"], deg)
+        page.update()
+
+    fullscreen_rotate_btn = ft.IconButton(
+        icon=ft.Icons.SCREEN_ROTATION,
+        icon_size=20,
+        icon_color=ft.Colors.AMBER_400,
+        tooltip=t("dialog.fullscreen_rotate"),
+        on_click=on_toggle_fullscreen_rotation,
+    )
+    fullscreen_close_btn = ft.IconButton(
+        icon=ft.Icons.CLOSE,
+        icon_size=22,
+        tooltip=t("dialog.fullscreen_close"),
+        on_click=lambda _: page.pop_dialog(),
+    )
+
+    fullscreen_chart_dialog = ft.AlertDialog(
+        modal=False,
+        inset_padding=ft.Padding.all(0),
+        title_padding=ft.Padding.symmetric(horizontal=14, vertical=6),
+        content_padding=ft.Padding.all(6),
+        actions_padding=ft.Padding.all(0),
+        shape=ft.RoundedRectangleBorder(radius=0),
+        title=ft.Row([
+            fullscreen_dialog_icon,
+            fullscreen_dialog_title,
+            fullscreen_rotate_btn,
+            fullscreen_close_btn,
+        ], spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+        content=ft.Container(
+            content=ft.InteractiveViewer(
+                content=fullscreen_img,
+                min_scale=0.8,
+                max_scale=5.0,
+                expand=True,
+            ),
+            width=4000,
+            height=4000,
+            expand=True,
+            alignment=ft.Alignment(0, 0),
+        ),
+    )
+
+    def open_chart_fullscreen(chart_key: str):
+        if chart_key == "map":
+            if not img_map.src:
+                state["map_bytes"] = render_route_map()
+                img_map.src = state["map_bytes"]
+            base_b64 = img_map.src
+            title_str = t("tab2.map_preview")
+            icon_name = ft.Icons.MAP
+            icon_col = ft.Colors.LIGHT_BLUE_400
+        elif chart_key == "elevation":
+            if not img_elevation.src:
+                img_elevation.src = render_elevation_chart()
+            base_b64 = img_elevation.src
+            title_str = t("tab2.elevation_power")
+            icon_name = ft.Icons.SHOW_CHART
+            icon_col = ft.Colors.AMBER_400
+        elif chart_key == "energy":
+            if not img_energy.src:
+                img_energy.src = render_energy_chart()
+            base_b64 = img_energy.src
+            title_str = t("tab2.energy_tanks")
+            icon_name = ft.Icons.BATTERY_CHARGING_FULL
+            icon_col = ft.Colors.RED_400
+        else:
+            return
+
+        should_rotate = is_mobile_device(page)
+        fullscreen_state["chart_key"] = chart_key
+        fullscreen_state["base_src"] = base_b64
+        fullscreen_state["rotated"] = should_rotate
+
+        fullscreen_dialog_icon.icon = icon_name
+        fullscreen_dialog_icon.color = icon_col
+        fullscreen_dialog_title.value = title_str
+        fullscreen_img.src = rotate_base64_image(base_b64, 90 if should_rotate else 0)
+        page.show_dialog(fullscreen_chart_dialog)
+
+    map_fullscreen_btn = ft.IconButton(
+        icon=ft.Icons.FULLSCREEN,
+        icon_size=18,
+        icon_color=ft.Colors.GREY_400,
+        tooltip=t("tab2.fullscreen_tooltip"),
+        on_click=lambda _: open_chart_fullscreen("map"),
+    )
+    elevation_fullscreen_btn = ft.IconButton(
+        icon=ft.Icons.FULLSCREEN,
+        icon_size=18,
+        icon_color=ft.Colors.GREY_400,
+        tooltip=t("tab2.fullscreen_tooltip"),
+        on_click=lambda _: open_chart_fullscreen("elevation"),
+    )
+    energy_fullscreen_btn = ft.IconButton(
+        icon=ft.Icons.FULLSCREEN,
+        icon_size=18,
+        icon_color=ft.Colors.GREY_400,
+        tooltip=t("tab2.fullscreen_tooltip"),
+        on_click=lambda _: open_chart_fullscreen("energy"),
+    )
+
+    map_card_container = ft.Container(
+        content=img_map,
+        padding=10,
+        border_radius=16,
+        ink=True,
+        tooltip=t("tab2.fullscreen_tooltip"),
+        on_click=lambda _: open_chart_fullscreen("map"),
+    )
+    elevation_card_container = ft.Container(
+        content=img_elevation,
+        padding=10,
+        border_radius=16,
+        ink=True,
+        tooltip=t("tab2.fullscreen_tooltip"),
+        on_click=lambda _: open_chart_fullscreen("elevation"),
+    )
+    energy_card_container = ft.Container(
+        content=img_energy,
+        padding=10,
+        border_radius=16,
+        ink=True,
+        tooltip=t("tab2.fullscreen_tooltip"),
+        on_click=lambda _: open_chart_fullscreen("energy"),
+    )
+
     shopping_info_btn = ft.IconButton(
         icon=ft.Icons.INFO_OUTLINE,
         icon_size=16,
@@ -2434,8 +2621,9 @@ async def main(page: ft.Page):
                     padding=6,
                 ),
                 map_section_title,
+                map_fullscreen_btn,
             ], spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER),
-            ft.Card(content=ft.Container(content=img_map, padding=10), shape=ft.RoundedRectangleBorder(radius=16)),
+            ft.Card(content=map_card_container, shape=ft.RoundedRectangleBorder(radius=16)),
 
             ft.Row([
                 ft.Container(
@@ -2445,8 +2633,9 @@ async def main(page: ft.Page):
                     padding=6,
                 ),
                 elevation_section_title,
+                elevation_fullscreen_btn,
             ], spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER),
-            ft.Card(content=ft.Container(content=img_elevation, padding=10), shape=ft.RoundedRectangleBorder(radius=16)),
+            ft.Card(content=elevation_card_container, shape=ft.RoundedRectangleBorder(radius=16)),
 
             ft.Row([
                 ft.Container(
@@ -2456,8 +2645,9 @@ async def main(page: ft.Page):
                     padding=6,
                 ),
                 energy_section_title,
+                energy_fullscreen_btn,
             ], spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER),
-            ft.Card(content=ft.Container(content=img_energy, padding=10), shape=ft.RoundedRectangleBorder(radius=16)),
+            ft.Card(content=energy_card_container, shape=ft.RoundedRectangleBorder(radius=16)),
 
             ft.Row([
                 ft.Container(
@@ -2486,6 +2676,20 @@ async def main(page: ft.Page):
         padding=16,
         expand=True
     )
+
+    tab_analysis_view.test_controls = {
+        "map_card_container": map_card_container,
+        "elevation_card_container": elevation_card_container,
+        "energy_card_container": energy_card_container,
+        "map_fullscreen_btn": map_fullscreen_btn,
+        "elevation_fullscreen_btn": elevation_fullscreen_btn,
+        "energy_fullscreen_btn": energy_fullscreen_btn,
+        "fullscreen_chart_dialog": fullscreen_chart_dialog,
+        "fullscreen_img": fullscreen_img,
+        "fullscreen_rotate_btn": fullscreen_rotate_btn,
+        "fullscreen_close_btn": fullscreen_close_btn,
+        "fullscreen_state": fullscreen_state,
+    }
 
     # ----------------------------------------------------
     # TAB 3: KAROO-SYNC & EXPORTE
@@ -3404,6 +3608,14 @@ async def main(page: ft.Page):
         elevation_section_title.value = t("tab2.elevation_power")
         energy_section_title.value = t("tab2.energy_tanks")
         intervals_section_title.value = t("tab2.intervals_zones")
+        map_fullscreen_btn.tooltip = t("tab2.fullscreen_tooltip")
+        elevation_fullscreen_btn.tooltip = t("tab2.fullscreen_tooltip")
+        energy_fullscreen_btn.tooltip = t("tab2.fullscreen_tooltip")
+        map_card_container.tooltip = t("tab2.fullscreen_tooltip")
+        elevation_card_container.tooltip = t("tab2.fullscreen_tooltip")
+        energy_card_container.tooltip = t("tab2.fullscreen_tooltip")
+        fullscreen_rotate_btn.tooltip = t("dialog.fullscreen_rotate")
+        fullscreen_close_btn.tooltip = t("dialog.fullscreen_close")
         shopping_section_title.value = t("tab2.shopping_title")
         shopping_desc_text.value = t("tab2.shopping_subtitle")
         shopping_info_btn.tooltip = f"Info: {t('tab2.shopping_title')}"
