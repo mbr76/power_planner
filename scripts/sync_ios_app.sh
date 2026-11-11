@@ -19,45 +19,82 @@ if [ -f "$CONFIG" ]; then
     echo "📌 Build-Nummer gesetzt auf: $BUILD_NUM ($BUILD_TIME)"
 fi
 
-# 2. Zielverzeichnisse
+# 2. Python-Dateiliste für die App
+PYTHON_FILES=(
+    "power_planner_flet.py"
+    "pacing_optimizer.py"
+    "gpx_exporter.py"
+    "hammerhead_client.py"
+    "i18n.py"
+    "main.py"
+)
+
+# 3. Zielverzeichnisse
 STAGING_APP="$PROJECT_ROOT/build/python-app"
 SPM_APP="$PROJECT_ROOT/build/flutter/ios/Flutter/ephemeral/Packages/.packages/serious_python_darwin-4.7.0/Sources/serious_python_darwin/Resources/app"
+PUB_CACHE_SPM="$HOME/.pub-cache/hosted/pub.dev/serious_python_darwin-4.7.0/darwin/serious_python_darwin/Sources/serious_python_darwin/Resources/app"
 
+echo "📂 Kopiere aktuelle Python-Dateien in Staging ($STAGING_APP)..."
 mkdir -p "$STAGING_APP"
-
-# 3. Synchronisiere Python-Dateien in Staging
-echo "📂 Kopiere aktuelle Python-Dateien..."
-cp "$PROJECT_ROOT/power_planner_flet.py" "$STAGING_APP/"
-cp "$PROJECT_ROOT/pacing_optimizer.py" "$STAGING_APP/"
-cp "$PROJECT_ROOT/gpx_exporter.py" "$STAGING_APP/"
-cp "$PROJECT_ROOT/hammerhead_client.py" "$STAGING_APP/"
-cp "$PROJECT_ROOT/main.py" "$STAGING_APP/"
+for f in "${PYTHON_FILES[@]}"; do
+    if [ -f "$PROJECT_ROOT/$f" ]; then
+        cp "$PROJECT_ROOT/$f" "$STAGING_APP/"
+    fi
+done
 if [ -f "$PROJECT_ROOT/oetztaler_route.gpx" ]; then
     cp "$PROJECT_ROOT/oetztaler_route.gpx" "$STAGING_APP/"
 fi
 
-# 4. Synchronisiere in Serious Python SPM Resources (wird direkt in Runner.app gepackt)
-if [ -d "$SPM_APP" ] && [ -w "$SPM_APP" ]; then
-    echo "🚀 Aktualisiere Serious Python SPM Resources/app..."
-    # Alte .pyc entfernen
-    rm -f "$SPM_APP"/*.pyc "$SPM_APP"/power_planner_flet.* "$SPM_APP"/pacing_optimizer.* "$SPM_APP"/gpx_exporter.* "$SPM_APP"/hammerhead_client.* "$SPM_APP"/main.*
-    
-    cp "$PROJECT_ROOT/power_planner_flet.py" "$SPM_APP/"
-    cp "$PROJECT_ROOT/pacing_optimizer.py" "$SPM_APP/"
-    cp "$PROJECT_ROOT/gpx_exporter.py" "$SPM_APP/"
-    cp "$PROJECT_ROOT/hammerhead_client.py" "$SPM_APP/"
-    cp "$PROJECT_ROOT/main.py" "$SPM_APP/"
-    if [ -f "$PROJECT_ROOT/oetztaler_route.gpx" ]; then
-        cp "$PROJECT_ROOT/oetztaler_route.gpx" "$SPM_APP/"
-    fi
+# 4. Synchronisiere in Serious Python SPM Resources & Bundle-Verzeichnisse
+TARGET_DIRS=()
 
-    # Kompiliere frische Bytecode-Dateien (.pyc) mit exakt gleichem Python 3.14
-    if [ -x "$PROJECT_ROOT/pacing-env/bin/python" ]; then
-        "$PROJECT_ROOT/pacing-env/bin/python" -m compileall -b -q "$SPM_APP" "$STAGING_APP"
+if [ -d "$SPM_APP" ] && [ -w "$SPM_APP" ]; then
+    TARGET_DIRS+=("$SPM_APP")
+fi
+
+if [ -d "$PUB_CACHE_SPM" ] && [ -w "$PUB_CACHE_SPM" ]; then
+    REAL_SPM=$(cd "$SPM_APP" 2>/dev/null && pwd -P || echo "")
+    REAL_PUB=$(cd "$PUB_CACHE_SPM" 2>/dev/null && pwd -P || echo "")
+    if [ -z "$REAL_SPM" ] || [ "$REAL_SPM" != "$REAL_PUB" ]; then
+        TARGET_DIRS+=("$PUB_CACHE_SPM")
+    elif [ ${#TARGET_DIRS[@]} -eq 0 ]; then
+        TARGET_DIRS+=("$PUB_CACHE_SPM")
     fi
 fi
 
-# 5. Cache-Stempel von Flet aktualisieren
+# Auch vorhandene iOS-Build-Bundles synchronisieren
+for bundle_app in \
+    "$PROJECT_ROOT/build/flutter/build/ios/Debug-iphonesimulator/power-planner.app/serious_python_darwin_serious_python_darwin.bundle/app" \
+    "$PROJECT_ROOT/build/flutter/build/ios/iphonesimulator/power-planner.app/serious_python_darwin_serious_python_darwin.bundle/app" \
+    "$PROJECT_ROOT/build/ios-simulator/power-planner.app/serious_python_darwin_serious_python_darwin.bundle/app" \
+    "$PROJECT_ROOT/build/flutter/build/ios/Debug-iphonesimulator/serious_python_darwin_serious_python_darwin.bundle/app"; do
+    if [ -d "$bundle_app" ] && [ -w "$bundle_app" ]; then
+        TARGET_DIRS+=("$bundle_app")
+    fi
+done
+
+for target in "${TARGET_DIRS[@]}"; do
+    echo "🚀 Aktualisiere Python-Dateien in: $target"
+    for f in "${PYTHON_FILES[@]}"; do
+        base="${f%.*}"
+        rm -f "$target/$base".* "$target/$base".pyc
+        cp "$PROJECT_ROOT/$f" "$target/"
+    done
+    if [ -f "$PROJECT_ROOT/oetztaler_route.gpx" ]; then
+        cp "$PROJECT_ROOT/oetztaler_route.gpx" "$target/"
+    fi
+done
+
+# 5. Kompiliere frische Bytecode-Dateien (.pyc) mit exakt gleichem Python 3.14
+if [ -x "$PROJECT_ROOT/pacing-env/bin/python" ]; then
+    COMPILE_TARGETS=("$STAGING_APP")
+    for t in "${TARGET_DIRS[@]}"; do
+        COMPILE_TARGETS+=("$t")
+    done
+    "$PROJECT_ROOT/pacing-env/bin/python" -m compileall -b -q "${COMPILE_TARGETS[@]}"
+fi
+
+# 6. Cache-Stempel von Flet aktualisieren
 if [ -f "$PROJECT_ROOT/build/.hash/package" ]; then
     rm -f "$PROJECT_ROOT/build/.hash/package"
 fi

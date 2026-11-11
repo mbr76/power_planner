@@ -55,8 +55,8 @@ except ImportError:
 
 # App Version & Build Metadata
 APP_VERSION = "1.0.0"
-BUILD_NUMBER = "46"
-BUILD_TIMESTAMP = "2026-10-27 21:31:32"
+BUILD_NUMBER = "47"
+BUILD_TIMESTAMP = "2026-11-11 10:46:39"
 
 # Übersetzungs-Presets für Berggänge (kleinste Übersetzung) und Abfahrten (größte Übersetzung)
 GEAR_RATIOS_LOW = {
