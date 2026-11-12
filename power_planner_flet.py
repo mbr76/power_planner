@@ -55,8 +55,8 @@ except ImportError:
 
 # App Version & Build Metadata
 APP_VERSION = "1.0.0"
-BUILD_NUMBER = "48"
-BUILD_TIMESTAMP = "2026-11-11 11:56:02"
+BUILD_NUMBER = "49"
+BUILD_TIMESTAMP = "2026-11-11 14:16:13"
 
 # Übersetzungs-Presets für Berggänge (kleinste Übersetzung) und Abfahrten (größte Übersetzung)
 GEAR_RATIOS_LOW = {
@@ -693,6 +693,34 @@ def rotate_base64_image(b64_str: str, degrees: int = 90) -> str:
         return b64_str
 
 
+def power_to_zone_color(target_watt: float, ftp: float) -> str:
+    """Maps a suggested power value (Watts) relative to FTP into its high-contrast Coggan zone hex color."""
+    ftp_ref = max(1.0, float(ftp))
+    pct = (float(target_watt) / ftp_ref) * 100.0
+    if pct < 55.0:
+        return "#64748B"  # Z1 Recovery / Coasting (Slate)
+    elif pct < 75.0:
+        return "#0284C7"  # Z2 Endurance (Sky Blue)
+    elif pct < 90.0:
+        return "#16A34A"  # Z3 Tempo (Emerald Green)
+    elif pct < 105.0:
+        return "#F59E0B"  # Z4 Threshold (Amber)
+    elif pct < 120.0:
+        return "#EA580C"  # Z5 VO2Max (Orange)
+    else:
+        return "#DC2626"  # Z6 Anaerobic (Crimson Red)
+
+
+def compute_route_segment_colors(powers, ftp: float) -> list[str]:
+    """Computes the per-segment Coggan zone color list for a sequence of point power values."""
+    arr = np.asarray(powers, dtype=float)
+    if len(arr) < 2:
+        return []
+    seg_powers = 0.5 * (arr[:-1] + arr[1:])
+    return [power_to_zone_color(p, ftp) for p in seg_powers]
+
+
+
 # ==========================================
 # MAIN FLET APPLICATION CONTROLLER
 # ==========================================
@@ -932,9 +960,59 @@ async def main(page: ft.Page):
         if bg_img and extent:
             ax.imshow(bg_img, extent=extent, aspect='equal', origin='upper')
 
-        # High-contrast route line (white halo + warm amber line)
-        ax.plot(df_route['longitude'], df_route['latitude'], color='#FFFFFF', linewidth=4.5, alpha=0.9, zorder=3)
-        ax.plot(df_route['longitude'], df_route['latitude'], color='#D97706', linewidth=2.8, alpha=0.95, zorder=4)
+        # High-contrast route line (white halo + power-zone colorized segments)
+        lons = df_route['longitude'].values
+        lats = df_route['latitude'].values
+        ax.plot(lons, lats, color='#FFFFFF', linewidth=5.2, alpha=0.92, solid_capstyle='round', solid_joinstyle='round', zorder=3)
+
+        df_raw = state["calc"].get("df_raw") if state.get("calc") else None
+        ftp_val = float(state.get("initial_ftp", 250))
+        if df_raw is not None and "target_power" in df_raw.columns and len(df_raw) == len(lons) and len(lons) >= 2:
+            from matplotlib.collections import LineCollection
+            from matplotlib.lines import Line2D
+
+            powers = df_raw['target_power'].values
+            seg_colors = compute_route_segment_colors(powers, ftp_val)
+            points = np.column_stack([lons, lats]).reshape(-1, 1, 2)
+            segments = np.concatenate([points[:-1], points[1:]], axis=1)
+            lc = LineCollection(
+                segments,
+                colors=seg_colors,
+                linewidths=3.2,
+                alpha=0.96,
+                capstyle='round',
+                joinstyle='round',
+                zorder=4,
+            )
+            ax.add_collection(lc)
+
+            ftp_int = int(round(ftp_val))
+            legend_items = [
+                Line2D([0], [0], color="#64748B", lw=3, label=f"Z1 <{int(ftp_int * 0.55)}W"),
+                Line2D([0], [0], color="#0284C7", lw=3, label=f"Z2 {int(ftp_int * 0.55)}–{int(ftp_int * 0.75)}W"),
+                Line2D([0], [0], color="#16A34A", lw=3, label=f"Z3 {int(ftp_int * 0.75)}–{int(ftp_int * 0.90)}W"),
+                Line2D([0], [0], color="#F59E0B", lw=3, label=f"Z4 {int(ftp_int * 0.90)}–{int(ftp_int * 1.05)}W"),
+                Line2D([0], [0], color="#EA580C", lw=3, label=f"Z5 {int(ftp_int * 1.05)}–{int(ftp_int * 1.20)}W"),
+                Line2D([0], [0], color="#DC2626", lw=3, label=f"Z6 >{int(ftp_int * 1.20)}W"),
+            ]
+            leg = ax.legend(
+                handles=legend_items,
+                title=t("chart.map_power_legend"),
+                loc="lower right",
+                ncol=2,
+                fontsize=7.5,
+                title_fontsize=8,
+                frameon=True,
+                facecolor="#FFFFFF",
+                edgecolor="#CBD5E1",
+                framealpha=0.90,
+                handlelength=1.4,
+                columnspacing=0.9,
+                borderpad=0.45,
+            )
+            leg.set_zorder(10)
+        else:
+            ax.plot(lons, lats, color='#D97706', linewidth=2.8, alpha=0.95, zorder=4)
 
         # Automatic detection and annotation of significant mountain passes
         if 'elevation' in df_route.columns and (df_route['elevation'].max() - df_route['elevation'].min() > 80):
@@ -1498,6 +1576,9 @@ async def main(page: ft.Page):
                 
             is_analysis_active = getattr(nav_bar, "selected_index", 0) == 1
             if is_analysis_active or force_charts:
+                if not route_changed:
+                    state["map_bytes"] = render_route_map()
+                    img_map.src = state["map_bytes"]
                 img_elevation.src = render_elevation_chart()
                 img_energy.src = render_energy_chart()
                 intervals_column.controls = [build_intervals_table()]
@@ -3468,6 +3549,8 @@ async def main(page: ft.Page):
             current_view_container.content = tab_setup_view
         elif idx == 1:
             if state.get("charts_dirty", False):
+                state["map_bytes"] = render_route_map()
+                img_map.src = state["map_bytes"]
                 img_elevation.src = render_elevation_chart()
                 img_energy.src = render_energy_chart()
                 intervals_column.controls = [build_intervals_table()]

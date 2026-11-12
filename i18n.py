@@ -194,6 +194,7 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "chart.w_prime_label": "W'-Akku (Anaerob) %",
         "chart.glycogen_label": "Glykogentank (Metabolisch) %",
         "chart.effective_ftp_label": "Effektive FTP (Höhe & Ermüdung) %",
+        "chart.map_power_legend": "Ziel-Leistung (Zonen)",
 
         # Tab 3 (Karoo-Sync)
         "sync.quick_scan": "Schneller Live-Scan (Kamera)",
@@ -374,6 +375,7 @@ TRANSLATIONS: Dict[str, Dict[str, str]] = {
         "chart.w_prime_label": "W' Battery (Anaerobic) %",
         "chart.glycogen_label": "Glycogen Tank (Metabolic) %",
         "chart.effective_ftp_label": "Effective FTP (Altitude & Fatigue) %",
+        "chart.map_power_legend": "Target Power (Zones)",
 
         # Tab 3 (Karoo-Sync)
         "sync.quick_scan": "Quick Live Scan (Camera)",

@@ -590,6 +590,24 @@ def test_tab2_fullscreen_charts_and_mobile_rotation():
     asyncio.run(run())
 
 
+def test_route_map_power_colorization():
+    """Test Coggan power zone color mapping for route segments across all 6 zones."""
+    ftp = 300.0
+    # Z1 (<55% = <165W), Z2 (55-75% = 165-225W), Z3 (75-90% = 225-270W),
+    # Z4 (90-105% = 270-315W), Z5 (105-120% = 315-360W), Z6 (>=120% = >=360W)
+    assert ppf.power_to_zone_color(100, ftp) == "#64748B"  # Z1
+    assert ppf.power_to_zone_color(200, ftp) == "#0284C7"  # Z2
+    assert ppf.power_to_zone_color(250, ftp) == "#16A34A"  # Z3
+    assert ppf.power_to_zone_color(300, ftp) == "#F59E0B"  # Z4
+    assert ppf.power_to_zone_color(340, ftp) == "#EA580C"  # Z5
+    assert ppf.power_to_zone_color(400, ftp) == "#DC2626"  # Z6
+
+    colors = ppf.compute_route_segment_colors([0, 120, 200, 260, 300, 350, 420], ftp)
+    assert len(colors) == 6
+    assert colors == ["#64748B", "#64748B", "#16A34A", "#F59E0B", "#EA580C", "#DC2626"]
+
+
+
 
 
 
